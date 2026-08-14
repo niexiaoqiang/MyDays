@@ -1,0 +1,10 @@
+.codegraph
+.git
+.trellis
+.DS_Store
+README.md
+compose.yaml
+tests
+data
+secrets
+nginx.conf

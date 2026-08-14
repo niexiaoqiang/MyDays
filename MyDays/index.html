@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f5f0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%233f6d59'/%3E%3Cpath d='M18 17h28a4 4 0 0 1 4 4v27H14V21a4 4 0 0 1 4-4Zm4-6v12m20-12v12M21 31h22M21 39h15' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="MyDays：一个安静、轻量的个人工作记录台。"
+    />
+    <title>MyDays · 今日工作台</title>
+    <link rel="stylesheet" href="/styles.css?v=18" />
+  </head>
+  <body data-route="today">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M8 6.5h16a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z" />
+              <path d="M11 4v5M21 4v5M10 14h12M10 18h8" />
+            </svg>
+          </span>
+          <span>
+            <strong>MyDays</strong>
+            <small>把日子过明白</small>
+          </span>
+        </div>
+
+        <nav class="nav-list">
+          <a class="nav-item active" href="/" data-route="today" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20H4v-9.5Z"/><path d="M9 20v-6h6v6"/></svg>
+            今日
+          </a>
+          <a class="nav-item" href="/tasks" data-route="tasks">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8 12 2.5 2.5L16 9"/></svg>
+            待办事项
+          </a>
+          <a class="nav-item" href="/timeline" data-route="timeline">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+            工作时间线
+          </a>
+          <a class="nav-item" href="/review" data-route="review">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v15H5z"/><path d="M8 3v4M16 3v4M8 11h8M8 15h5"/></svg>
+            今日复盘
+          </a>
+          <a class="nav-item" href="/summary" data-route="summary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg>
+            周期汇总
+          </a>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+
+        <div class="sidebar-tip">
+          <span class="tip-icon">⌘</span>
+          <p><strong>快速记录</strong><br />按 <kbd>/</kbd> 随时聚焦输入框</p>
+        </div>
+
+        <button class="backup-button" id="export-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
+          导出数据备份
+        </button>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="date-controller">
+            <button class="icon-button" id="previous-day" type="button" aria-label="前一天">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <button
+              class="current-date"
+              id="date-picker-button"
+              type="button"
+              aria-label="打开日期选择器"
+              aria-expanded="false"
+              aria-controls="calendar-popover"
+            >
+              <span id="date-label">8月12日 · 星期三</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+            </button>
+            <div
+              class="calendar-popover"
+              id="calendar-popover"
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby="calendar-dialog-title"
+              hidden
+            >
+              <div class="calendar-summary">
+                <span id="calendar-dialog-title">选择日期</span>
+                <strong id="calendar-selected-label">8月12日，星期三</strong>
+                <small id="calendar-selected-year">2026</small>
+              </div>
+              <div class="calendar-content">
+                <div class="calendar-toolbar">
+                  <strong id="calendar-month-label">2026年8月</strong>
+                  <span>
+                    <button class="calendar-icon-button" id="calendar-previous-month" type="button" aria-label="上个月">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <button class="calendar-icon-button" id="calendar-next-month" type="button" aria-label="下个月">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                  </span>
+                </div>
+                <div class="calendar-weekdays" aria-hidden="true">
+                  <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+                </div>
+                <div class="calendar-grid" id="calendar-grid" role="grid" aria-labelledby="calendar-month-label"></div>
+                <div class="calendar-actions">
+                  <button class="text-button" id="calendar-cancel" type="button">取消</button>
+                  <button class="text-button" id="calendar-today" type="button">回到今天</button>
+                </div>
+              </div>
+            </div>
+            <button class="icon-button" id="next-day" type="button" aria-label="后一天">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <button class="today-button" id="today-button" type="button" hidden>回到今天</button>
+          </div>
+
+          <div class="topbar-actions">
+            <span class="save-state"><i></i> 正在连接 SQLite…</span>
+            <div class="account-menu-wrap">
+              <button class="avatar" id="account-menu-button" type="button" aria-label="打开账户菜单" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">MY</button>
+              <div class="account-menu" id="account-menu" role="menu" hidden>
+                <div class="account-menu-heading"><strong>MyDays</strong><span>个人工作台</span></div>
+                <a class="account-menu-item settings" id="ai-settings-link" href="/ai-settings" data-route="ai-settings" role="menuitem">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v1.2a6 6 0 0 1 2.8 1.6L19 8l2 3.5-1.2.7a6 6 0 0 1 0 3.6l1.2.7L19 20l-1.2-.8a6 6 0 0 1-2.8 1.6V22H9v-1.2a6 6 0 0 1-2.8-1.6L5 20l-2-3.5 1.2-.7a6 6 0 0 1 0-3.6L3 11.5 5 8l1.2.8A6 6 0 0 1 9 7.2V6a3 3 0 0 1 3-3Z"/><circle cx="12" cy="14" r="2.5"/></svg>
+                  AI 设置
+                </a>
+                <button class="account-menu-item" id="logout-button" type="button" role="menuitem" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6v14h4M14 8l4 4-4 4M9 12h9"/></svg>
+                  退出登录
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div class="content-wrap">
+          <section class="welcome" id="overview">
+            <div>
+              <p class="eyebrow" id="day-context">TODAY, AUGUST 12</p>
+              <h1 id="greeting">上午好，今天想推进什么？</h1>
+              <p class="welcome-copy" id="welcome-copy">把重要的事留在这里，让大脑轻一点。</p>
+            </div>
+            <div class="day-score" aria-label="今日完成进度">
+              <svg viewBox="0 0 76 76" aria-hidden="true">
+                <circle class="score-track" cx="38" cy="38" r="31" />
+                <circle class="score-value" id="score-ring" cx="38" cy="38" r="31" />
+              </svg>
+              <span><strong id="score-number">0%</strong><small>完成度</small></span>
+            </div>
+          </section>
+
+          <section class="capture-card" aria-labelledby="capture-title">
+            <div class="capture-tabs" role="tablist" aria-label="记录类型">
+              <button class="capture-tab active" type="button" role="tab" aria-selected="true" data-type="task">
+                <span class="tab-dot"></span> 待办事项
+              </button>
+              <button class="capture-tab" type="button" role="tab" aria-selected="false" data-type="log">
+                <span class="tab-dot"></span> 工作记录
+              </button>
+            </div>
+            <form id="capture-form">
+              <label class="capture-input-wrap" for="capture-input">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <input
+                  id="capture-input"
+                  name="title"
+                  type="text"
+                  maxlength="120"
+                  autocomplete="off"
+                  placeholder="写下需要完成的事，按 Enter 保存…"
+                />
+              </label>
+              <div class="capture-options">
+                <div class="capture-select project-field" data-capture-select>
+                  <button class="capture-select-trigger" id="project-select-trigger" type="button" data-label="所属项目" aria-label="所属项目：无项目" aria-haspopup="listbox" aria-expanded="false" aria-controls="project-select-menu">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg>
+                    <span class="capture-select-value">无项目</span>
+                    <svg class="capture-select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                  </button>
+                  <select class="capture-native-select" id="project-select" aria-label="所属项目" hidden><option value="">无项目</option></select>
+                  <div class="capture-select-menu" id="project-select-menu" role="listbox" aria-labelledby="project-select-trigger" hidden></div>
+                </div>
+                <div class="capture-select priority-field" data-capture-select>
+                  <button class="capture-select-trigger" id="priority-select-trigger" type="button" data-label="优先级" aria-label="优先级：普通" aria-haspopup="listbox" aria-expanded="false" aria-controls="priority-select-menu">
+                    <span class="priority-indicator"></span>
+                    <span class="capture-select-value">普通</span>
+                    <svg class="capture-select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                  </button>
+                  <select class="capture-native-select" id="priority-select" aria-label="优先级" hidden>
+                    <option value="normal">普通</option>
+                    <option value="high">重要</option>
+                    <option value="low">稍后</option>
+                  </select>
+                  <div class="capture-select-menu" id="priority-select-menu" role="listbox" aria-labelledby="priority-select-trigger" hidden>
+                    <button class="capture-select-option" type="button" role="option" data-value="normal" data-tone="normal" aria-selected="true">普通</button>
+                    <button class="capture-select-option" type="button" role="option" data-value="high" data-tone="high" aria-selected="false">重要</button>
+                    <button class="capture-select-option" type="button" role="option" data-value="low" data-tone="low" aria-selected="false">稍后</button>
+                  </div>
+                </div>
+                <span class="capture-hint">Enter 保存</span>
+                <button class="primary-button" type="submit">添加</button>
+              </div>
+            </form>
+          </section>
+
+          <div class="dashboard-grid">
+            <section class="panel task-panel" id="tasks">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">FOCUS</p>
+                  <h2>今日待办 <span class="count-badge" id="task-count">0</span></h2>
+                </div>
+                <div class="filter-tabs" role="group" aria-label="筛选待办">
+                  <button class="filter-tab active" type="button" data-filter="all">全部</button>
+                  <button class="filter-tab" type="button" data-filter="open">进行中</button>
+                  <button class="filter-tab" type="button" data-filter="done">已完成</button>
+                </div>
+              </div>
+              <div class="task-list" id="task-list"></div>
+            </section>
+
+            <div class="right-column">
+              <section class="panel note-panel">
+                <div class="panel-header compact">
+                  <div>
+                    <p class="section-kicker">SCRATCHPAD</p>
+                    <h2>临时笔记</h2>
+                  </div>
+                  <span class="autosave-label">自动保存</span>
+                </div>
+                <textarea
+                  id="daily-note"
+                  maxlength="2000"
+                  placeholder="会议结论、灵感、临时信息…"
+                  aria-label="临时笔记"
+                ></textarea>
+                <div class="note-footer">
+                  <span id="note-count">0 / 2000</span>
+                  <span>⌘ + Enter 保存</span>
+                </div>
+              </section>
+
+              <section class="panel timeline-panel" id="timeline">
+                <div class="panel-header compact">
+                  <div>
+                    <p class="section-kicker">TIMELINE</p>
+                    <h2>工作时间线 <span class="count-badge" id="log-count">0</span></h2>
+                  </div>
+                </div>
+                <div class="timeline-list" id="timeline-list"></div>
+              </section>
+            </div>
+
+            <section class="panel review-panel" id="review">
+              <div class="review-heading">
+                <div>
+                  <p class="section-kicker">DAILY REVIEW</p>
+                  <h2 id="daily-review-title">给今天一个交代</h2>
+                  <p>用三分钟收好今天，也为明天留一个清晰的起点。</p>
+                </div>
+                <div class="review-generation-actions">
+                  <button class="soft-button" id="generate-review" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3ZM18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"/></svg>
+                  自动整理今日记录
+                  </button>
+                </div>
+              </div>
+              <div class="review-fields">
+                <label>
+                  <span><i class="review-dot green"></i> 今天完成了什么？</span>
+                  <textarea id="review-wins" maxlength="1200" placeholder="记录今天的成果和进展…"></textarea>
+                </label>
+                <label>
+                  <span><i class="review-dot amber"></i> 遇到了什么问题？</span>
+                  <textarea id="review-blockers" maxlength="1200" placeholder="有什么阻塞或值得复盘的地方？"></textarea>
+                </label>
+                <label>
+                  <span><i class="review-dot blue"></i> 明天最重要的事</span>
+                  <textarea id="review-next" maxlength="1200" placeholder="明天优先推进什么？"></textarea>
+                </label>
+              </div>
+              <div class="review-footer">
+                <span id="review-state">内容会自动保存</span>
+                <button class="primary-button" id="save-review" type="button">完成今日复盘</button>
+              </div>
+            </section>
+          </div>
+
+          <section class="summary-page" id="summary-page" aria-labelledby="summary-title">
+            <div class="summary-hero">
+              <div>
+                <p class="eyebrow">PERIOD SUMMARY</p>
+                <h1 id="summary-title">回顾一段时间，看见持续的进展</h1>
+                <p>自动汇总工作数据，再写下属于自己的阶段复盘。</p>
+              </div>
+              <div class="period-tabs" role="group" aria-label="汇总周期">
+                <button class="period-tab active" type="button" aria-pressed="true" data-period="week">每周</button>
+                <button class="period-tab" type="button" aria-pressed="false" data-period="month">每月</button>
+                <button class="period-tab" type="button" aria-pressed="false" data-period="quarter">每季度</button>
+                <button class="period-tab" type="button" aria-pressed="false" data-period="year">每年</button>
+              </div>
+            </div>
+
+            <div class="period-toolbar" aria-label="选择汇总时间">
+              <button class="icon-button" id="summary-previous" type="button" aria-label="上一个周期">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <div class="period-heading">
+                <strong id="summary-period-label">本周</strong>
+                <span id="summary-period-range"></span>
+              </div>
+              <button class="icon-button" id="summary-next" type="button" aria-label="下一个周期">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button class="soft-button summary-current-button" id="summary-current" type="button">回到本周期</button>
+            </div>
+
+            <section class="summary-scope-bar" aria-labelledby="summary-scope-title">
+              <span class="summary-scope-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg>
+              </span>
+              <div class="summary-scope-copy">
+                <strong id="summary-scope-title">汇总项目范围</strong>
+                <span>指标、成果列表、快速初稿和下方周期复盘都会按当前项目分类。</span>
+              </div>
+              <div class="summary-project-filter">
+                <span id="summary-project-label">当前项目</span>
+                <div class="capture-select project-field summary-project-select" data-capture-select>
+                  <button class="capture-select-trigger" id="summary-project-trigger" type="button" data-label="周期汇总项目范围" aria-label="周期汇总项目范围：全部项目" aria-haspopup="listbox" aria-expanded="false" aria-controls="summary-project-menu">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg>
+                    <span class="capture-select-value">全部项目</span>
+                    <svg class="capture-select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                  </button>
+                  <select class="capture-native-select" id="summary-project-filter" aria-labelledby="summary-project-label" hidden><option value="">全部项目</option></select>
+                  <div class="capture-select-menu" id="summary-project-menu" role="listbox" aria-labelledby="summary-project-trigger" hidden></div>
+                </div>
+              </div>
+            </section>
+
+            <div class="summary-metrics" aria-label="周期核心指标">
+              <article class="metric-card"><span>完成待办</span><strong id="summary-completed">0</strong><small id="summary-task-total">共 0 项</small></article>
+              <article class="metric-card"><span>待办完成率</span><strong id="summary-rate">0%</strong><small>按事项日期统计</small></article>
+              <article class="metric-card"><span>工作记录</span><strong id="summary-logs">0</strong><small>含完成待办记录</small></article>
+              <article class="metric-card"><span>活跃天数</span><strong id="summary-active-days">0</strong><small id="summary-days-total">共 7 天</small></article>
+            </div>
+
+            <div class="summary-insights">
+              <section class="panel summary-trend-card">
+                <div class="panel-header compact">
+                  <div><p class="section-kicker">ACTIVITY</p><h2>工作趋势</h2></div>
+                </div>
+                <div class="trend-chart" id="summary-trend" aria-label="周期工作趋势"></div>
+              </section>
+              <section class="panel summary-project-card">
+                <div class="panel-header compact">
+                  <div><p class="section-kicker">PROJECTS</p><h2>项目分布</h2></div>
+                </div>
+                <div class="project-distribution" id="summary-projects"></div>
+              </section>
+            </div>
+
+            <div class="summary-lists">
+              <section class="panel summary-list-card">
+                <div class="panel-header compact"><div><p class="section-kicker">ACHIEVEMENTS</p><h2>主要成果</h2></div></div>
+                <div class="summary-item-list" id="summary-achievements"></div>
+              </section>
+              <section class="panel summary-list-card">
+                <div class="panel-header compact"><div><p class="section-kicker">OPEN ITEMS</p><h2>未完成事项</h2></div></div>
+                <div class="summary-item-list" id="summary-open-items"></div>
+              </section>
+            </div>
+
+            <section class="panel summary-review-panel">
+              <div class="review-heading">
+                <div>
+                  <p class="section-kicker">PERIOD REVIEW</p>
+                  <h2 id="summary-review-title">本周复盘</h2>
+                  <p>可先生成初稿，也可交给 AI 整理；检查修改后再保存到 SQLite。</p>
+                </div>
+                <div class="summary-review-actions">
+                  <button class="soft-button" id="generate-summary-review" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h10M5 17h7"/></svg>
+                    快速初稿
+                  </button>
+                  <button class="primary-button summary-ai-button" id="generate-ai-summary" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
+                    <span>AI 总结</span>
+                  </button>
+                </div>
+              </div>
+              <div class="summary-ai-notice" id="summary-ai-notice">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.4c0 4.4 3.2 8.1 7.5 9.6 4.3-1.5 7.5-5.2 7.5-9.6V6L12 3Z"/><path d="M9 12.2 11 14l4-4"/></svg>
+                <span>使用 AI 总结时，当前周期的工作事项和复盘内容会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。</span>
+              </div>
+              <div class="review-fields summary-review-fields">
+                <label><span><i class="review-dot green"></i> 主要成果</span><textarea id="summary-wins" maxlength="4000" placeholder="这一周期取得了哪些成果？"></textarea></label>
+                <label><span><i class="review-dot amber"></i> 问题与反思</span><textarea id="summary-blockers" maxlength="4000" placeholder="遇到了什么问题，有哪些值得反思？"></textarea></label>
+                <label><span><i class="review-dot blue"></i> 下一周期重点</span><textarea id="summary-next-actions" maxlength="4000" placeholder="下一周期最重要的行动是什么？"></textarea></label>
+              </div>
+              <div class="review-footer">
+                <span id="summary-review-state">内容会自动保存</span>
+                <button class="primary-button" id="save-summary-review" type="button">完成本周复盘</button>
+              </div>
+            </section>
+          </section>
+
+          <section class="ai-settings-page" id="ai-settings-page" aria-labelledby="ai-settings-title">
+            <div class="ai-settings-hero">
+              <div>
+                <p class="eyebrow">AI CONNECTIONS</p>
+                <h1 id="ai-settings-title">连接你的 AI 服务</h1>
+                <p>集中管理 OpenAI 或 Claude 兼容服务。API Key 会在服务端加密保存，页面不会再次读取明文。</p>
+              </div>
+              <button class="primary-button" id="ai-new-provider" type="button">添加 AI 服务</button>
+            </div>
+
+            <div class="ai-settings-layout">
+              <section class="panel ai-provider-panel" aria-labelledby="ai-provider-list-title">
+                <div class="panel-header compact">
+                  <div><p class="section-kicker">PROVIDERS</p><h2 id="ai-provider-list-title">服务列表</h2></div>
+                  <span class="count-badge" id="ai-provider-count">0</span>
+                </div>
+                <div class="ai-provider-list" id="ai-provider-list"></div>
+              </section>
+
+              <section class="panel ai-provider-editor" aria-labelledby="ai-editor-title">
+                <div class="ai-editor-heading">
+                  <div><p class="section-kicker">CONFIGURATION</p><h2 id="ai-editor-title">添加 AI 服务</h2></div>
+                  <span class="ai-security-chip">服务端加密</span>
+                </div>
+                <form id="ai-provider-form">
+                  <div class="ai-form-grid">
+                    <label class="ai-field"><span>服务名称</span><input id="ai-provider-name" maxlength="80" required placeholder="例如：公司模型服务" /></label>
+                    <label class="ai-field"><span>兼容协议</span><select id="ai-provider-protocol"><option value="openai">OpenAI Chat Completions</option><option value="anthropic">Anthropic Claude Messages</option></select></label>
+                    <label class="ai-field ai-field-wide"><span>Base URL</span><input id="ai-provider-base-url" maxlength="500" required placeholder="https://api.example.com/v1" /><small>公网地址必须使用 HTTPS；本机或私有局域网可使用 HTTP。</small></label>
+                    <label class="ai-field"><span>模型名称</span><div class="ai-model-control"><input id="ai-provider-model" maxlength="160" required placeholder="例如：gpt-4.1-mini" /><button class="text-button" id="ai-fetch-models" type="button" disabled>获取模型</button></div><select id="ai-model-options" aria-label="选择已获取的模型" hidden><option value="">选择模型…</option></select><small id="ai-model-status">可手动填写；保存服务并配置 Key 后也可以获取模型列表。</small></label>
+                    <label class="ai-field"><span>超时时间</span><div class="ai-input-suffix"><input id="ai-provider-timeout" type="number" min="1" max="120" value="15" required /><span>秒</span></div></label>
+                    <label class="ai-field ai-field-wide"><span>API Key</span><input id="ai-provider-api-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="新增时必填；编辑时留空则保留现有 Key" /><small id="ai-key-status">Key 仅提交给当前 MyDays 服务端，并使用 AES-256-GCM 加密。</small></label>
+                    <label class="ai-field anthropic-option" hidden><span>Anthropic Version</span><input id="ai-anthropic-version" maxlength="40" value="2023-06-01" /></label>
+                    <label class="ai-field"><span>测试最大 Token</span><input id="ai-max-tokens" type="number" min="1" max="1024" value="16" /></label>
+                  </div>
+                  <div class="ai-test-result" id="ai-test-result" role="status" aria-live="polite">保存配置后可以测试连接。</div>
+                  <div class="ai-editor-actions">
+                    <div>
+                      <button class="text-button danger" id="ai-delete-provider" type="button" hidden>删除服务</button>
+                      <button class="text-button danger" id="ai-clear-key" type="button" hidden>清除 API Key</button>
+                    </div>
+                    <div>
+                      <button class="soft-button" id="ai-set-default" type="button" hidden>设为默认</button>
+                      <button class="soft-button" id="ai-test-provider" type="button" disabled>测试连接</button>
+                      <button class="primary-button" type="submit">保存配置</button>
+                    </div>
+                  </div>
+                </form>
+              </section>
+            </div>
+            <section class="panel ai-prompt-panel" aria-labelledby="ai-prompt-title">
+              <div class="ai-editor-heading">
+                <div><p class="section-kicker">SUMMARY PREFERENCE</p><h2 id="ai-prompt-title">AI 总结偏好</h2><p>描述你希望 AI 如何组织、侧重和表达复盘内容。固定输出格式与安全要求仍由 MyDays 控制。</p></div>
+                <span class="ai-security-chip" id="ai-prompt-mode">默认</span>
+              </div>
+              <label class="ai-field"><span>提示词撮要</span><textarea id="ai-summary-prompt" maxlength="4000" placeholder="例如：突出客户价值、风险和下周可执行事项。"></textarea><small id="ai-prompt-count">0 / 4000</small></label>
+              <div class="ai-prompt-actions">
+                <span id="ai-prompt-state" role="status" aria-live="polite">正在读取设置…</span>
+                <div><button class="soft-button" id="ai-prompt-reset" type="button">恢复默认</button><button class="primary-button" id="ai-prompt-save" type="button">保存偏好</button></div>
+              </div>
+            </section>
+          </section>
+
+          <footer class="page-footer">
+            <span>MyDays · 数据已安全保存到 SQLite</span>
+            <span id="footer-date"></span>
+          </footer>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="dialog-backdrop" id="project-dialog" hidden>
+      <section class="project-dialog-card" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
+        <div class="project-dialog-heading">
+          <div><p class="section-kicker">PROJECT OPTIONS</p><h2 id="project-dialog-title">管理项目选项</h2><p>这些项目会显示在记录区下拉框中；修改选项不会改写历史记录。</p></div>
+          <button class="icon-button" id="project-dialog-close" type="button" aria-label="关闭项目管理"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
+        </div>
+        <form class="project-add-form" id="project-add-form">
+          <label for="project-new-name">新增项目</label>
+          <div><input id="project-new-name" maxlength="80" autocomplete="off" placeholder="输入新的项目名称" /><button class="primary-button" type="submit">添加项目</button></div>
+        </form>
+        <div class="project-option-list" id="project-option-list"></div>
+        <div class="project-dialog-footer"><span id="project-dialog-state" role="status" aria-live="polite"></span><button class="soft-button" id="project-dialog-done" type="button">完成</button></div>
+      </section>
+    </div>
+
+    <template id="empty-task-template">
+      <div class="empty-state">
+        <span class="empty-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m8 12 2.5 2.5L16 9"/></svg>
+        </span>
+        <strong>今天还没有待办</strong>
+        <p>从上方写下第一件想推进的事吧。</p>
+      </div>
+    </template>
+
+    <template id="empty-log-template">
+      <div class="empty-state small">
+        <span class="empty-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+        </span>
+        <strong>还没有工作记录</strong>
+        <p>完成待办，或在上方直接记一笔。</p>
+      </div>
+    </template>
+
+    <script src="/app.js?v=18"></script>
+  </body>
+</html>

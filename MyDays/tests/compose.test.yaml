@@ -1,0 +1,14 @@
+services:
+  mydays:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: mydays:sqlite-test
+    ports:
+      - "4174:3000"
+    volumes:
+      - mydays_sqlite_test_data:/app/data
+
+volumes:
+  mydays_sqlite_test_data:
+    name: mydays_sqlite_test_data

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f5f0" />
+    <meta name="description" content="登录 MyDays 个人工作台" />
+    <title>MyDays · 访问验证</title>
+    <link rel="stylesheet" href="/styles.css?v=18" />
+  </head>
+  <body class="login-body">
+    <main class="login-shell">
+      <section class="login-card" aria-labelledby="login-title">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 6.5h16a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z"/><path d="M11 4v5M21 4v5M10 14h12M10 18h8"/></svg></span>
+        <p class="eyebrow">PRIVATE WORKSPACE</p>
+        <h1 id="login-title">欢迎回到 MyDays</h1>
+        <p>请输入部署者提供的共享访问密码。</p>
+        <form id="login-form">
+          <label class="ai-field"><span>访问密码</span><input id="login-password" type="password" maxlength="1024" autocomplete="current-password" required autofocus /></label>
+          <div class="login-error" id="login-error" role="alert" aria-live="polite"></div>
+          <button class="primary-button" type="submit">进入工作台</button>
+        </form>
+        <small>这是一套共享测试空间，所有受邀者会看到同一份数据。</small>
+      </section>
+    </main>
+    <script src="/login.js?v=1"></script>
+  </body>
+</html>

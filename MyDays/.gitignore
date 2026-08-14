@@ -1,0 +1,15 @@
+data/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+secrets/
+.codegraph/
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+mydays-data*.tar.gz
+.trellis/workspace/--help/

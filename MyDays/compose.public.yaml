@@ -1,0 +1,44 @@
+services:
+  mydays:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mydays:public
+    environment:
+      TRUST_PROXY: "1"
+      MYDAYS_ACCESS_PASSWORD_FILE: /run/secrets/mydays_access_password
+      AI_CONFIG_SECRET_FILE: /run/secrets/mydays_ai_secret
+    secrets:
+      - mydays_access_password
+      - mydays_ai_secret
+    volumes:
+      - mydays_data:/app/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      - mydays
+    environment:
+      MYDAYS_DOMAIN: "${MYDAYS_DOMAIN:?Set MYDAYS_DOMAIN}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+secrets:
+  mydays_access_password:
+    file: ./secrets/mydays_access_password.txt
+  mydays_ai_secret:
+    file: ./secrets/mydays_ai_secret.txt
+
+volumes:
+  mydays_data:
+    name: "${MYDAYS_VOLUME:-mydays_data}"
+  caddy_data:
+  caddy_config:

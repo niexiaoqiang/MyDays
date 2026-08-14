@@ -1,0 +1,24 @@
+services:
+  mydays:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mydays:local
+    ports:
+      - "127.0.0.1:${MYDAYS_PORT:-4173}:3000"
+    environment:
+      MYDAYS_ACCESS_PASSWORD_FILE: /run/secrets/mydays_access_password
+      AI_ALLOW_PROXY_FAKE_IP: "1"
+    secrets:
+      - mydays_access_password
+    volumes:
+      - mydays_data:/app/data
+    restart: unless-stopped
+
+secrets:
+  mydays_access_password:
+    file: ./secrets/mydays_access_password.txt
+
+volumes:
+  mydays_data:
+    name: "${MYDAYS_VOLUME:-mydays_data}"
