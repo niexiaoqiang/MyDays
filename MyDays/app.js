@@ -3,7 +3,7 @@ const MIGRATION_KEY = "mydays.v1.sqlite-migrated";
 const ROUTES = Object.freeze({
   "/": {
     key: "today",
-    title: "MyDays · 今日工作台",
+    title: "MyDays · 工作台",
     eyebrow: "TODAY",
     copy: "把重要的事留在这里，让大脑轻一点。",
   },
@@ -79,6 +79,14 @@ const elements = {
   prioritySelect: document.querySelector("#priority-select"),
   priorityField: document.querySelector(".priority-field"),
   captureSelects: [...document.querySelectorAll("[data-capture-select]")],
+  overviewTaskList: document.querySelector("#overview-task-list"),
+  overviewTaskCount: document.querySelector("#overview-task-count"),
+  overviewLogList: document.querySelector("#overview-log-list"),
+  overviewLogCount: document.querySelector("#overview-log-count"),
+  overviewReviewStatus: document.querySelector("#overview-review-status"),
+  overviewReviewTitle: document.querySelector("#overview-review-title"),
+  overviewReviewCopy: document.querySelector("#overview-review-copy"),
+  overviewReviewLink: document.querySelector("#overview-review-link"),
   taskList: document.querySelector("#task-list"),
   taskCount: document.querySelector("#task-count"),
   filterTabs: [...document.querySelectorAll(".filter-tab")],
@@ -419,6 +427,7 @@ function render() {
   renderTimeline();
   renderNotes();
   renderReview();
+  renderOverview();
   renderProgress();
   renderSummary();
   renderAiSettings();
@@ -636,10 +645,85 @@ function focusCalendarDate(dateKey) {
   });
 }
 
-function renderTasks() {
-  const tasks = state.tasks
-    .filter((task) => task.date === selectedDate)
+function tasksForDate(date = selectedDate) {
+  return state.tasks
+    .filter((task) => task.date === date)
     .sort((a, b) => Number(a.completed) - Number(b.completed) || priorityWeight(b.priority) - priorityWeight(a.priority) || a.createdAt.localeCompare(b.createdAt));
+}
+
+function logsForDate(date = selectedDate) {
+  return state.logs
+    .filter((log) => log.date === date)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function renderOverview() {
+  const openTasks = tasksForDate().filter((task) => !task.completed);
+  const recentLogs = logsForDate();
+  elements.overviewTaskCount.textContent = String(openTasks.length);
+  elements.overviewLogCount.textContent = String(recentLogs.length);
+
+  if (openTasks.length) {
+    elements.overviewTaskList.innerHTML = openTasks.slice(0, 3).map((task) => {
+      const priorityLabel = task.priority === "high" ? "重要" : task.priority === "low" ? "稍后" : "普通";
+      const priority = task.priority !== "normal"
+        ? `<span class="overview-chip ${escapeAttribute(task.priority)}">${priorityLabel}</span>`
+        : "";
+      const project = task.project ? `<span class="overview-chip project">${escapeHtml(task.project)}</span>` : "";
+      return `<article class="overview-item">
+        <span class="overview-item-marker task" aria-hidden="true"></span>
+        <div><strong title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</strong><p>${project}${priority}<time>${formatTime(task.createdAt)}</time></p></div>
+      </article>`;
+    }).join("");
+  } else {
+    elements.overviewTaskList.innerHTML = '<div class="overview-empty"><strong>暂无待办</strong><p>今天没有待推进的事项，可以放心专注。</p></div>';
+  }
+
+  if (recentLogs.length) {
+    elements.overviewLogList.innerHTML = recentLogs.slice(0, 3).map((log) => {
+      const meta = `${log.sourceTaskId ? "完成待办" : "手动记录"}${log.project ? ` · ${escapeHtml(log.project)}` : ""}`;
+      return `<article class="overview-item">
+        <time class="overview-item-time">${formatTime(log.createdAt)}</time>
+        <span class="overview-item-marker log" aria-hidden="true"></span>
+        <div><strong title="${escapeAttribute(log.title)}">${escapeHtml(log.title)}</strong><p>${meta}</p></div>
+      </article>`;
+    }).join("");
+  } else {
+    elements.overviewLogList.innerHTML = '<div class="overview-empty"><strong>还没有动态</strong><p>完成待办或记录进展后，最新内容会出现在这里。</p></div>';
+  }
+
+  const review = readDailyReview() ?? {};
+  const hasDraft = [review.wins, review.blockers, review.next].some((value) => value?.trim());
+  const reviewState = review.completedAt ? "completed" : hasDraft ? "active" : "pending";
+  const reviewContent = {
+    pending: {
+      status: "待复盘",
+      title: "用三分钟收好今天",
+      copy: "整理成果、问题和明天的重点。",
+      action: "开始复盘",
+    },
+    active: {
+      status: "进行中",
+      title: "复盘草稿等待完成",
+      copy: "已经有了开头，再补充一点就能收好今天。",
+      action: "继续复盘",
+    },
+    completed: {
+      status: "已完成",
+      title: "今天已经好好收尾",
+      copy: review.completedAt ? `复盘完成于 ${formatTime(review.completedAt)}，随时可以回来更新。` : "",
+      action: "查看复盘",
+    },
+  }[reviewState];
+  elements.overviewReviewStatus.dataset.status = reviewState;
+  elements.overviewReviewStatus.textContent = reviewContent.status;
+  elements.overviewReviewTitle.textContent = reviewContent.title;
+  elements.overviewReviewCopy.textContent = reviewContent.copy;
+  elements.overviewReviewLink.childNodes[0].textContent = `${reviewContent.action} `;
+}
+
+function renderTasks() {
+  const tasks = tasksForDate();
 
   const filteredTasks = tasks.filter((task) => {
     if (taskFilter === "open") return !task.completed;
@@ -689,9 +773,7 @@ function priorityWeight(priority) {
 }
 
 function renderTimeline() {
-  const logs = state.logs
-    .filter((log) => log.date === selectedDate)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const logs = logsForDate();
 
   elements.logCount.textContent = String(logs.length);
   elements.timelineList.replaceChildren();
@@ -1962,6 +2044,14 @@ elements.settingsLink.addEventListener("click", (event) => {
   event.preventDefault();
   setAccountMenu(false);
   navigateTo(new URL(elements.settingsLink.href).pathname);
+});
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("[data-app-link]");
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const target = new URL(link.href);
+  if (target.origin !== window.location.origin || !ROUTES[normalizePath(target.pathname)]) return;
+  event.preventDefault();
+  navigateTo(target.pathname);
 });
 
 window.addEventListener("popstate", () => {

@@ -57,7 +57,18 @@ let browser;
   await page.reload();
   await page.waitForLoadState("networkidle");
 
-  await page.locator(".task-title", { hasText: "从浏览器迁移的待办" }).waitFor();
+  if (!(await page.locator("#workbench-overview").isVisible()) || (await page.locator(".dashboard-grid").isVisible())) {
+    throw new Error("工作台没有隔离完整待办、时间线和复盘面板");
+  }
+  if ((await page.title()) !== "MyDays · 工作台"
+    || (await page.getByRole("link", { name: "工作台", exact: true }).getAttribute("aria-current")) !== "page") {
+    throw new Error("工作台命名或激活状态不正确");
+  }
+  if ((await page.locator("#overview-task-count").innerText()) !== "0"
+    || (await page.locator("#overview-log-count").innerText()) !== "0"
+    || (await page.locator("#overview-review-status").innerText()) !== "待复盘") {
+    throw new Error("工作台初始摘要不正确");
+  }
   if ((await page.getByLabel("临时笔记").inputValue()) !== "从 localStorage 迁移的笔记") {
     throw new Error("旧版 localStorage 笔记迁移失败");
   }
@@ -97,6 +108,7 @@ let browser;
   if (!(await page.locator(".task-panel").isVisible()) || (await page.locator(".timeline-panel").isVisible())) {
     throw new Error("待办页面内容隔离不正确");
   }
+  await page.locator(".task-title", { hasText: "从浏览器迁移的待办" }).waitFor();
 
   await page.locator("#project-select-trigger").click();
   await page.getByRole("button", { name: "管理项目" }).click();
@@ -112,6 +124,38 @@ let browser;
   await page.getByRole("button", { name: "添加" }).click();
   await page.locator(".task-title", { hasText: "完成 MyDays 第一版" }).waitFor();
   if ((await page.locator("#task-count").innerText()) !== "1") throw new Error("待办计数不正确");
+
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
+  if (new URL(page.url()).pathname !== "/" || (await page.locator("#overview-task-list .overview-item").count()) !== 1) {
+    throw new Error("工作台未显示新增的待办摘要");
+  }
+  if (!(await page.locator("#overview-task-list").innerText()).includes("完成 MyDays 第一版")) {
+    throw new Error("工作台待办摘要内容不正确");
+  }
+  await page.evaluate(() => {
+    const now = new Date().toISOString();
+    for (let index = 0; index < 3; index += 1) {
+      state.tasks.push({ id: `overview-limit-${index}`, date: selectedDate, title: `临时摘要 ${index}`, project: "", priority: "normal", completed: false, createdAt: now });
+    }
+    renderOverview();
+  });
+  if ((await page.locator("#overview-task-list .overview-item").count()) !== 3) throw new Error("工作台待办摘要超过 3 条");
+  await page.evaluate(() => {
+    state.tasks = state.tasks.filter((task) => !task.id.startsWith("overview-limit-"));
+    renderOverview();
+  });
+  const overviewTaskLink = page.locator(".overview-task-card [data-app-link]");
+  const modifiedOverviewClickPrevented = await overviewTaskLink.evaluate((link) => {
+    let prevented = null;
+    link.addEventListener("click", (event) => { prevented = event.defaultPrevented; }, { once: true });
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
+    return prevented;
+  });
+  if (modifiedOverviewClickPrevented !== false) throw new Error("工作台摘要错误拦截了修饰键点击");
+  await overviewTaskLink.click();
+  if (new URL(page.url()).pathname !== "/tasks" || !(await page.locator(".task-panel").isVisible())) {
+    throw new Error("工作台待办入口没有无刷新进入专属页面");
+  }
 
   await page.getByRole("button", { name: "完成待办：完成 MyDays 第一版" }).click();
   if ((await page.locator("#task-count").innerText()) !== "0") throw new Error("完成后的待办计数不正确");
@@ -169,8 +213,13 @@ let browser;
     throw new Error("项目选项重命名或删除改写了历史记录");
   }
 
-  await page.getByRole("link", { name: "今日", exact: true }).click();
-  if (new URL(page.url()).pathname !== "/") throw new Error("今日页面 URL 不正确");
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
+  if (new URL(page.url()).pathname !== "/") throw new Error("工作台 URL 不正确");
+  if ((await page.locator("#overview-log-list .overview-item").count()) !== 3
+    || (await page.locator("#overview-review-status").innerText()) !== "进行中") {
+    throw new Error("工作台动态摘要或复盘状态不正确");
+  }
+  await page.screenshot({ path: `${screenshotDir}/workbench-desktop.png`, fullPage: true });
   await page.getByLabel("临时笔记").fill("第一版交互已经可以使用。");
 
   await page.getByRole("link", { name: "今日复盘" }).click();
@@ -344,7 +393,10 @@ let browser;
   await page.goBack();
   await page.waitForFunction(() => location.pathname === "/tasks");
   if (!(await page.locator(".task-panel").isVisible())) throw new Error("浏览器后退未恢复待办页面");
-  await page.getByRole("link", { name: "今日", exact: true }).click();
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
+  if ((await page.locator("#overview-review-status").innerText()) !== "已完成") {
+    throw new Error("工作台没有显示已完成的复盘状态");
+  }
   if ((await page.getByLabel("临时笔记").inputValue()) !== "第一版交互已经可以使用。") {
     throw new Error("刷新后 SQLite 笔记没有保留");
   }
@@ -430,8 +482,17 @@ let browser;
     Object.setPrototypeOf(FixedDate, NativeDate);
     globalThis.Date = FixedDate;
   }, { now: fixedNow });
-  await mobile.goto(`${baseUrl}/tasks`);
+  await mobile.goto(baseUrl);
   await mobile.waitForLoadState("networkidle");
+  if (!(await mobile.locator("#workbench-overview").isVisible()) || (await mobile.locator(".dashboard-grid").isVisible())) {
+    throw new Error("移动端工作台概览不可见");
+  }
+  const mobileOverviewBox = await mobile.locator("#workbench-overview").boundingBox();
+  if (!mobileOverviewBox || mobileOverviewBox.x < 0 || mobileOverviewBox.x + mobileOverviewBox.width > 390) {
+    throw new Error("移动端工作台超出 390px 视口");
+  }
+  await mobile.screenshot({ path: `${screenshotDir}/workbench-mobile.png`, fullPage: true });
+  await mobile.getByRole("link", { name: "待办事项" }).click();
   if (!(await mobile.locator(".sidebar").isVisible()) || !(await mobile.locator("#capture-input").isVisible())) {
     throw new Error("移动端核心界面不可见");
   }

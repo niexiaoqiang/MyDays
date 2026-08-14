@@ -12,8 +12,8 @@
       name="description"
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
-    <title>MyDays · 今日工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=18" />
+    <title>MyDays · 工作台</title>
+    <link rel="stylesheet" href="/styles.css?v=19" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -34,7 +34,7 @@
         <nav class="nav-list">
           <a class="nav-item active" href="/" data-route="today" aria-current="page">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20H4v-9.5Z"/><path d="M9 20v-6h6v6"/></svg>
-            今日
+            工作台
           </a>
           <a class="nav-item" href="/tasks" data-route="tasks">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8 12 2.5 2.5L16 9"/></svg>
@@ -214,6 +214,70 @@
             </form>
           </section>
 
+          <section class="overview-grid" id="workbench-overview" aria-label="工作台概览">
+            <article class="panel overview-card overview-task-card">
+              <div class="overview-card-header">
+                <div>
+                  <p class="section-kicker">NEXT UP</p>
+                  <h2>待办摘要 <span class="count-badge" id="overview-task-count">0</span></h2>
+                </div>
+                <a class="overview-link" href="/tasks" data-app-link>查看全部 <span aria-hidden="true">→</span></a>
+              </div>
+              <div class="overview-list" id="overview-task-list"></div>
+            </article>
+
+            <section class="panel note-panel overview-note-card">
+              <div class="panel-header compact">
+                <div>
+                  <p class="section-kicker">SCRATCHPAD</p>
+                  <h2>临时笔记</h2>
+                </div>
+                <span class="autosave-label">自动保存</span>
+              </div>
+              <textarea
+                id="daily-note"
+                maxlength="2000"
+                placeholder="会议结论、灵感、临时信息…"
+                aria-label="临时笔记"
+              ></textarea>
+              <div class="note-footer">
+                <span id="note-count">0 / 2000</span>
+                <span>⌘ + Enter 保存</span>
+              </div>
+            </section>
+
+            <article class="panel overview-card overview-timeline-card">
+              <div class="overview-card-header">
+                <div>
+                  <p class="section-kicker">RECENT ACTIVITY</p>
+                  <h2>最近动态 <span class="count-badge" id="overview-log-count">0</span></h2>
+                </div>
+                <a class="overview-link" href="/timeline" data-app-link>查看时间线 <span aria-hidden="true">→</span></a>
+              </div>
+              <div class="overview-list" id="overview-log-list"></div>
+            </article>
+
+            <article class="panel overview-card overview-review-card">
+              <div class="overview-card-header">
+                <div>
+                  <p class="section-kicker">DAILY REVIEW</p>
+                  <h2>今日复盘</h2>
+                </div>
+                <span class="overview-status" id="overview-review-status" data-status="pending">待复盘</span>
+              </div>
+              <div class="overview-review-body">
+                <span class="overview-review-icon" id="overview-review-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M5 5h14v15H5z"/><path d="M8 3v4M16 3v4M8 11h8M8 15h5"/></svg>
+                </span>
+                <div>
+                  <strong id="overview-review-title">用三分钟收好今天</strong>
+                  <p id="overview-review-copy">整理成果、问题和明天的重点。</p>
+                </div>
+              </div>
+              <a class="overview-action" href="/review" data-app-link id="overview-review-link">开始复盘 <span aria-hidden="true">→</span></a>
+            </article>
+          </section>
+
           <div class="dashboard-grid">
             <section class="panel task-panel" id="tasks">
               <div class="panel-header">
@@ -231,26 +295,6 @@
             </section>
 
             <div class="right-column">
-              <section class="panel note-panel">
-                <div class="panel-header compact">
-                  <div>
-                    <p class="section-kicker">SCRATCHPAD</p>
-                    <h2>临时笔记</h2>
-                  </div>
-                  <span class="autosave-label">自动保存</span>
-                </div>
-                <textarea
-                  id="daily-note"
-                  maxlength="2000"
-                  placeholder="会议结论、灵感、临时信息…"
-                  aria-label="临时笔记"
-                ></textarea>
-                <div class="note-footer">
-                  <span id="note-count">0 / 2000</span>
-                  <span>⌘ + Enter 保存</span>
-                </div>
-              </section>
-
               <section class="panel timeline-panel" id="timeline">
                 <div class="panel-header compact">
                   <div>
@@ -523,6 +567,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=18"></script>
+    <script src="/app.js?v=19"></script>
   </body>
 </html>

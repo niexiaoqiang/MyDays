@@ -14,7 +14,7 @@ docker compose up -d --build
 
 页面栏目使用独立地址：
 
-- 今日工作台：<http://localhost:4173/>
+- 工作台：<http://localhost:4173/>
 - 待办事项：<http://localhost:4173/tasks>
 - 工作时间线：<http://localhost:4173/timeline>
 - 今日复盘：<http://localhost:4173/review>
