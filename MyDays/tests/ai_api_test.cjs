@@ -68,6 +68,10 @@ const mock = createServer((request, response) => {
       response.statusCode = 302;
       response.setHeader("Location", "/openai/v1/models");
       response.end(JSON.stringify({ internal: "raw redirect body must not escape" }));
+    } else if (request.url === "/truncated/v1/chat/completions") {
+      response.end(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "## 本周工作汇报\n\n本周共完成" } }] }));
+    } else if (request.url === "/truncated-claude/messages") {
+      response.end(JSON.stringify({ stop_reason: "max_tokens", content: [{ type: "text", text: "## 本周工作汇报\n\n本周共完成" }] }));
     } else if (request.url === "/invalid/v1/chat/completions") {
       const isTextTask = body?.messages?.some((message) => String(message.content).includes("工作汇报") || String(message.content).includes("原文："));
       response.end(JSON.stringify({ choices: [{ message: { content: isTextTask ? request.headers.authorization : "not-json-upstream-secret" } }] }));
@@ -392,6 +396,7 @@ async function waitForApp() {
     const claudeReportRequest = requests.find((entry) => entry.url === "/claude/messages"
       && entry.body.messages.some((message) => String(message.content).includes("工作汇报")));
     assert.equal(claudeReportRequest.headers["x-api-key"], anthropicKey);
+    assert.equal(claudeReportRequest.body.max_tokens, 4096, "汇报生成的 Token 上限不得受连接测试 Token 设置限制");
     assert.equal(claudeReportRequest.headers["anthropic-version"], "2023-06-01");
 
     result = await request("/api/ai/polish-entry", {
@@ -406,6 +411,7 @@ async function waitForApp() {
       && entry.body.messages.some((message) => String(message.content).includes("原文：完成 MyDays")));
     assert.equal(claudePolishRequest.headers["x-api-key"], anthropicKey);
     assert.equal(claudePolishRequest.body.system.includes("不得把待办写成已完成"), true);
+    assert.equal(claudePolishRequest.body.max_tokens, 512);
 
     const invalidKey = "sk-invalid-summary-secret";
     result = await request("/api/ai/providers", {
@@ -449,6 +455,30 @@ async function waitForApp() {
     assert.equal(JSON.stringify(result.body).includes(invalidKey), false, "非法响应不得泄露 Key");
 
     await request(`/api/ai/providers/${invalidId}`, { method: "DELETE" });
+
+    for (const [protocol, suffix] of [["openai", "/truncated/v1"], ["anthropic", "/truncated-claude"]]) {
+      result = await request("/api/ai/providers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: `Truncated ${protocol}`,
+          protocol,
+          baseUrl: `${mockUrl}${suffix}`,
+          model: "truncated-model",
+          timeoutMs: 5000,
+          apiKey: "sk-truncated-secret",
+        }),
+      });
+      assert.equal(result.response.status, 201);
+      const truncatedId = result.body.provider.id;
+      await request(`/api/ai/providers/${truncatedId}/default`, { method: "POST" });
+      result = await request("/api/ai/period-report", {
+        method: "POST",
+        body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }),
+      });
+      assert.equal(result.response.status, 502);
+      assert.equal(result.body.error.code, "AI_RESPONSE_TRUNCATED", `${protocol} 被截断的汇报不得当作完整结果返回`);
+      await request(`/api/ai/providers/${truncatedId}`, { method: "DELETE" });
+    }
     await request(`/api/ai/providers/${openaiId}/default`, { method: "POST" });
     let polishRateLimited = false;
     for (let attempt = 0; attempt < 25; attempt += 1) {

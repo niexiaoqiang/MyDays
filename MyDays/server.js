@@ -17,6 +17,9 @@ const MAX_AI_SUMMARY_ITEMS = 120;
 const MAX_AI_REPORT_LENGTH = 8000;
 const MAX_REPORT_CONTENT_LENGTH = 20000;
 const MAX_CAPTURE_ENTRY_LENGTH = 120;
+const AI_PERIOD_TASK_MAX_TOKENS = 4096;
+const AI_POLISH_TASK_MAX_TOKENS = 512;
+const AI_TEXT_TASK_MIN_TIMEOUT_MS = 60000;
 const DEFAULT_AI_SUMMARY_PROMPT_EXCERPT = "请生成简洁、具体、忠于事实的中文工作复盘，突出可验证的成果、实际阻碍和可执行的下一步。优先使用易编辑的短段落或项目符号，不要虚构未提供的信息。";
 const AI_SECRET_PATH = path.join(DATA_DIR, ".ai-config-secret");
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
@@ -1211,6 +1214,12 @@ function buildPeriodSummarySnapshot(periodType, periodStart, project = null) {
   };
 }
 
+function aiOutputTruncated(protocol, result) {
+  return protocol === "openai"
+    ? result?.choices?.[0]?.finish_reason === "length"
+    : result?.stop_reason === "max_tokens";
+}
+
 function extractAiText(protocol, result) {
   return protocol === "openai"
     ? result?.choices?.[0]?.message?.content
@@ -1289,7 +1298,7 @@ function periodSummaryPrompt(snapshot, promptExcerpt) {
   ].join("\n");
 }
 
-async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, minTokens, maxTokens }) {
+async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, maxTokens }) {
   const provider = statements.readDefaultAiProvider.get();
   if (!provider) throw new HttpError(400, "AI_DEFAULT_PROVIDER_MISSING", "请先在 AI 设置中配置默认服务");
   if (!provider.model?.trim()) throw new HttpError(400, "AI_MODEL_MISSING", "默认 AI 服务还没有配置模型");
@@ -1305,7 +1314,6 @@ async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, min
         "x-api-key": apiKey,
         "anthropic-version": options.anthropicVersion || "2023-06-01",
       };
-  const requestMaxTokens = Math.max(minTokens, Math.min(maxTokens, options.maxTokens || maxTokens));
   const body = openai
     ? {
         model: provider.model,
@@ -1313,14 +1321,14 @@ async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, min
           { role: "system", content: systemPrompt },
           { role: "user", content: resolvedUserPrompt },
         ],
-        max_tokens: requestMaxTokens,
+        max_tokens: maxTokens,
         stream: false,
       }
     : {
         model: provider.model,
         system: systemPrompt,
         messages: [{ role: "user", content: resolvedUserPrompt }],
-        max_tokens: requestMaxTokens,
+        max_tokens: maxTokens,
         stream: false,
       };
   const startedAt = Date.now();
@@ -1328,7 +1336,7 @@ async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, min
     const response = await requestAiTarget(target, openai ? "/chat/completions" : "/messages", {
       headers,
       body: JSON.stringify(body),
-      timeoutMs: provider.timeout_ms,
+      timeoutMs: Math.max(provider.timeout_ms, AI_TEXT_TASK_MIN_TIMEOUT_MS),
     });
     if (response.status >= 300 && response.status < 400) {
       throw new HttpError(502, "AI_REDIRECT_BLOCKED", "AI 服务返回了重定向，出于安全原因未跟随");
@@ -1345,6 +1353,9 @@ async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, min
           ? "AI 服务请求过于频繁，请稍后再试"
           : `AI 服务返回错误（HTTP ${response.status}）`;
       throw new HttpError(response.status === 429 ? 429 : 502, code, message);
+    }
+    if (aiOutputTruncated(provider.protocol, response.result)) {
+      throw new HttpError(502, "AI_RESPONSE_TRUNCATED", "AI 输出达到长度上限被截断，请缩小周期范围或更换模型后重试");
     }
     return {
       ...parseResult(extractAiText(provider.protocol, response.result), apiKey),
@@ -1365,8 +1376,7 @@ async function runPeriodAiTask({ periodType, periodStart, project, systemPrompt,
       readAiSummarySettings().promptExcerpt,
     ),
     parseResult,
-    minTokens: 512,
-    maxTokens: 1024,
+    maxTokens: AI_PERIOD_TASK_MAX_TOKENS,
   });
 }
 
@@ -1464,8 +1474,7 @@ async function generateCapturePolish(input) {
     ].join("\n"),
     userPrompt: polishEntryPrompt(type, text),
     parseResult: (resultText, apiKey) => ({ polished: parsePolishedEntryText(resultText, text, [apiKey]) }),
-    minTokens: 128,
-    maxTokens: 256,
+    maxTokens: AI_POLISH_TASK_MAX_TOKENS,
   });
 }
 

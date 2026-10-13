@@ -1064,11 +1064,11 @@ function renderTasks() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8"/></svg>
       </button>
       ${renderEntryEditForm()}` : `
-      <button class="task-check" type="button" aria-label="${task.completed ? "恢复" : "完成"}待办：${escapeHtml(task.title)}">
+      <button class="task-check" type="button" aria-label="${task.completed ? "恢复" : "完成"}待办：${escapeAttribute(task.title)}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8"/></svg>
       </button>
       <div class="task-body">
-        <p class="task-title" title="${escapeHtml(task.title)}">${escapeHtml(task.title)}</p>
+        <p class="task-title" title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</p>
         <div class="task-meta">${project}${priority}<span>${formatTime(task.createdAt)}</span></div>
       </div>
       ${renderItemActions(task, "task")}`;
@@ -1101,7 +1101,7 @@ function renderTimeline() {
       <time class="timeline-time">${formatTime(log.createdAt)}</time>
       <i class="timeline-dot"></i>
       ${editing ? renderEntryEditForm() : `<div class="timeline-content">
-        <p title="${escapeHtml(log.title)}">${escapeHtml(log.title)}</p>
+        <p title="${escapeAttribute(log.title)}">${escapeHtml(log.title)}</p>
         <small>${log.sourceTaskId ? "完成待办" : "手动记录"}${log.project ? ` · ${escapeHtml(log.project)}` : ""}</small>
       </div>
       ${renderItemActions(log, "log")}`}`;
@@ -1299,7 +1299,7 @@ function renderTrend(context) {
   const buckets = makeTrendBuckets(context);
   const maxValue = Math.max(1, ...buckets.map((bucket) => bucket.value));
   elements.summaryTrend.innerHTML = buckets.map((bucket) => `
-    <div class="trend-column" title="${escapeHtml(bucket.label)}：${bucket.value} 项">
+    <div class="trend-column" title="${escapeAttribute(bucket.label)}：${bucket.value} 项">
       <span class="trend-value">${bucket.value || ""}</span>
       <i style="height:${Math.max(6, Math.round((bucket.value / maxValue) * 100))}%"></i>
       <small>${escapeHtml(bucket.label)}</small>
@@ -1969,7 +1969,7 @@ function renderAiSettings() {
     elements.aiProviderList.innerHTML = '<div class="ai-provider-empty"><strong>还没有 AI 服务</strong><span>添加兼容服务后，就可以在这里测试连接。</span></div>';
   } else {
     elements.aiProviderList.innerHTML = aiProviders.map((entry) => `
-      <button class="ai-provider-item${entry.id === selectedAiProviderId ? " active" : ""}" type="button" data-id="${escapeHtml(entry.id)}">
+      <button class="ai-provider-item${entry.id === selectedAiProviderId ? " active" : ""}" type="button" data-id="${escapeAttribute(entry.id)}">
         <span class="ai-provider-icon">${entry.protocol === "openai" ? "O" : "C"}</span>
         <span><strong>${escapeHtml(entry.name)}</strong><small>${entry.protocol === "openai" ? "OpenAI" : "Claude"} · ${escapeHtml(entry.model)}</small></span>
         <span class="ai-provider-badges">${entry.isDefault ? '<i>默认</i>' : ""}${entry.hasApiKey ? '<i class="key">Key 已配置</i>' : '<i class="warning">缺少 Key</i>'}</span>
