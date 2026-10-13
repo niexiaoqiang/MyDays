@@ -1,5 +1,7 @@
 const STORAGE_KEY = "mydays.v1";
 const MIGRATION_KEY = "mydays.v1.sqlite-migrated";
+const MAX_PATCH_OPS = 500;
+const MAX_KEEPALIVE_BODY_BYTES = 60000;
 const ROUTES = Object.freeze({
   "/": {
     key: "today",
@@ -203,6 +205,7 @@ const defaultState = {
 };
 
 let state = structuredClone(defaultState);
+let syncedState = structuredClone(defaultState);
 let revision = 0;
 let currentRoute = resolveRoute(window.location.pathname);
 let selectedDate = toDateKey(new Date());
@@ -215,8 +218,7 @@ let capturePolishLoading = false;
 let capturePolishRequestVersion = 0;
 let taskFilter = "all";
 let saveQueue = Promise.resolve();
-let saveEpoch = 0;
-let deferredSaveTimer;
+let deferredSave = null;
 let saveStateTimer;
 let toastTimer;
 let summarySaveVersion = 0;
@@ -311,41 +313,218 @@ function setSaveIndicator(label, failed = false) {
   indicator.innerHTML = `<i></i> ${label}`;
 }
 
+function normalizeTask(task) {
+  return {
+    id: task.id,
+    date: task.date,
+    title: task.title,
+    project: task.project ?? "",
+    priority: task.priority,
+    completed: Boolean(task.completed),
+    createdAt: task.createdAt,
+    completedAt: task.completedAt ?? null,
+  };
+}
+
+function normalizeLog(log) {
+  return {
+    id: log.id,
+    date: log.date,
+    title: log.title,
+    project: log.project ?? "",
+    sourceTaskId: log.sourceTaskId ?? null,
+    createdAt: log.createdAt,
+  };
+}
+
+function normalizeReview(review) {
+  return {
+    wins: review?.wins ?? "",
+    blockers: review?.blockers ?? "",
+    next: review?.next ?? "",
+    completedAt: review?.completedAt ?? null,
+  };
+}
+
+function normalizeReport(report) {
+  return { content: report?.content ?? "" };
+}
+
+function diffEntries(base, next, normalize, kind, field) {
+  const baseById = new Map(base.map((entry) => [entry.id, entry]));
+  const nextIds = new Set();
+  const puts = [];
+  for (const entry of next) {
+    nextIds.add(entry.id);
+    const value = normalize(entry);
+    const previous = baseById.get(entry.id);
+    if (!previous || JSON.stringify(normalize(previous)) !== JSON.stringify(value)) {
+      puts.push({ op: `${kind}.put`, [field]: value });
+    }
+  }
+  const deletes = base.filter((entry) => !nextIds.has(entry.id)).map((entry) => ({ op: `${kind}.delete`, id: entry.id }));
+  return { puts, deletes };
+}
+
+function diffMap(base = {}, next = {}, normalize, makePut, makeDelete) {
+  const ops = [];
+  for (const key of Object.keys(next)) {
+    const value = normalize(next[key]);
+    if (!Object.hasOwn(base, key) || JSON.stringify(normalize(base[key])) !== JSON.stringify(value)) {
+      ops.push(makePut(key, value));
+    }
+  }
+  for (const key of Object.keys(base)) {
+    if (!Object.hasOwn(next, key)) ops.push(makeDelete(key));
+  }
+  return ops;
+}
+
+function diffProjectMap(base = {}, next = {}, normalize, kind, keyField, valueField) {
+  const ops = [];
+  for (const key of new Set([...Object.keys(base), ...Object.keys(next)])) {
+    ops.push(...diffMap(
+      base[key],
+      next[key],
+      normalize,
+      (project, value) => ({ op: `${kind}.put`, [keyField]: key, project, [valueField]: value }),
+      (project) => ({ op: `${kind}.delete`, [keyField]: key, project }),
+    ));
+  }
+  return ops;
+}
+
+function diffState(base, next) {
+  const tasks = diffEntries(base.tasks, next.tasks, normalizeTask, "task", "task");
+  const logs = diffEntries(base.logs, next.logs, normalizeLog, "log", "log");
+  return [
+    ...tasks.puts,
+    ...logs.puts,
+    ...logs.deletes,
+    ...tasks.deletes,
+    ...diffMap(base.notes, next.notes, (content) => content ?? "",
+      (date, content) => ({ op: "note.put", date, content }),
+      (date) => ({ op: "note.delete", date })),
+    ...diffMap(base.reviews, next.reviews, normalizeReview,
+      (date, review) => ({ op: "review.put", date, review }),
+      (date) => ({ op: "review.delete", date })),
+    ...diffMap(base.periodReviews, next.periodReviews, normalizeReview,
+      (key, review) => ({ op: "periodReview.put", key, review }),
+      (key) => ({ op: "periodReview.delete", key })),
+    ...diffMap(base.periodReports, next.periodReports, normalizeReport,
+      (key, report) => ({ op: "periodReport.put", key, report }),
+      (key) => ({ op: "periodReport.delete", key })),
+    ...diffProjectMap(base.projectReviews, next.projectReviews, normalizeReview, "projectReview", "date", "review"),
+    ...diffProjectMap(base.projectPeriodReviews, next.projectPeriodReviews, normalizeReview, "projectPeriodReview", "key", "review"),
+    ...diffProjectMap(base.projectPeriodReports, next.projectPeriodReports, normalizeReport, "projectPeriodReport", "key", "report"),
+  ];
+}
+
+function applyOps(data, ops) {
+  const putEntry = (list, entry) => {
+    const index = list.findIndex((existing) => existing.id === entry.id);
+    if (index >= 0) list[index] = entry;
+    else list.push(entry);
+  };
+  const putProjectValue = (mapName, key, project, value) => {
+    data[mapName] ??= {};
+    if (!Object.hasOwn(data[mapName], key)) setOwnValue(data[mapName], key, Object.create(null));
+    setOwnValue(data[mapName][key], project, value);
+  };
+  const deleteProjectValue = (mapName, key, project) => {
+    if (data[mapName] && Object.hasOwn(data[mapName], key)) delete data[mapName][key][project];
+  };
+  for (const op of ops) {
+    switch (op.op) {
+      case "task.put": putEntry(data.tasks, op.task); break;
+      case "task.delete": data.tasks = data.tasks.filter((task) => task.id !== op.id); break;
+      case "log.put": putEntry(data.logs, op.log); break;
+      case "log.delete": data.logs = data.logs.filter((log) => log.id !== op.id); break;
+      case "note.put": data.notes[op.date] = op.content; break;
+      case "note.delete": delete data.notes[op.date]; break;
+      case "review.put": data.reviews[op.date] = op.review; break;
+      case "review.delete": delete data.reviews[op.date]; break;
+      case "periodReview.put": data.periodReviews[op.key] = op.review; break;
+      case "periodReview.delete": delete data.periodReviews[op.key]; break;
+      case "periodReport.put": data.periodReports[op.key] = op.report; break;
+      case "periodReport.delete": delete data.periodReports[op.key]; break;
+      case "projectReview.put": putProjectValue("projectReviews", op.date, op.project, op.review); break;
+      case "projectReview.delete": deleteProjectValue("projectReviews", op.date, op.project); break;
+      case "projectPeriodReview.put": putProjectValue("projectPeriodReviews", op.key, op.project, op.review); break;
+      case "projectPeriodReview.delete": deleteProjectValue("projectPeriodReviews", op.key, op.project); break;
+      case "projectPeriodReport.put": putProjectValue("projectPeriodReports", op.key, op.project, op.report); break;
+      case "projectPeriodReport.delete": deleteProjectValue("projectPeriodReports", op.key, op.project); break;
+      default: break;
+    }
+  }
+  const taskIds = new Set(data.tasks.map((task) => task.id));
+  data.logs = data.logs.filter((log) => !log.sourceTaskId || taskIds.has(log.sourceTaskId));
+  return data;
+}
+
+function adoptServerState(result) {
+  state = result.data;
+  syncedState = structuredClone(result.data);
+  revision = result.revision;
+}
+
 function persist({ defer = false, onSaved, onError } = {}) {
   setSaveIndicator("保存中…");
-  window.clearTimeout(deferredSaveTimer);
+  cancelDeferredSave();
   if (defer) {
-    deferredSaveTimer = window.setTimeout(() => queueSave({ onSaved, onError }), 400);
+    deferredSave = {
+      timer: window.setTimeout(() => queueSave({ onSaved, onError }), 400),
+      onSaved,
+      onError,
+    };
     return;
   }
   queueSave({ onSaved, onError });
 }
 
-function queueSave({ onSaved, onError } = {}) {
-  window.clearTimeout(deferredSaveTimer);
+function cancelDeferredSave() {
+  if (!deferredSave) return;
+  window.clearTimeout(deferredSave.timer);
+  deferredSave = null;
+}
+
+function flushDeferredSave() {
+  if (!deferredSave) return;
+  const { onSaved, onError } = deferredSave;
+  queueSave({ onSaved, onError, keepalive: true });
+}
+
+async function pushSnapshot(snapshot, { keepalive = false } = {}) {
+  const ops = diffState(syncedState, snapshot);
+  let stale = false;
+  for (let offset = 0; offset < ops.length; offset += MAX_PATCH_OPS) {
+    const body = JSON.stringify({ baseRevision: revision, ops: ops.slice(offset, offset + MAX_PATCH_OPS) });
+    const result = await requestJson("/api/state", {
+      method: "PATCH",
+      body,
+      keepalive: keepalive && body.length * 3 < MAX_KEEPALIVE_BODY_BYTES,
+    });
+    stale ||= result.stale;
+    revision = result.revision;
+  }
+  syncedState = snapshot;
+  return stale;
+}
+
+function queueSave({ onSaved, onError, keepalive = false } = {}) {
+  cancelDeferredSave();
   const snapshot = structuredClone(state);
-  const queuedEpoch = saveEpoch;
   saveQueue = saveQueue.catch(() => {}).then(async () => {
-    if (queuedEpoch !== saveEpoch) return;
     try {
-      const result = await requestJson("/api/state", {
-        method: "PUT",
-        body: JSON.stringify({ data: snapshot, revision }),
-      });
-      revision = result.revision;
+      const stale = await pushSnapshot(snapshot, { keepalive });
       setSaveIndicator("已保存到 SQLite");
       onSaved?.();
       window.clearTimeout(saveStateTimer);
       saveStateTimer = window.setTimeout(() => {
         setSaveIndicator("已保存到 SQLite");
       }, 450);
+      if (stale) await mergeServerState();
     } catch (error) {
-      if (error.code === "STATE_CONFLICT") {
-        saveEpoch += 1;
-        await reloadServerState();
-        showToast("检测到其他页面的更新，已载入最新数据");
-        return;
-      }
       setSaveIndicator("保存失败", true);
       onError?.(error);
       showToast(`保存失败：${error.message}`);
@@ -353,11 +532,38 @@ function queueSave({ onSaved, onError } = {}) {
   });
 }
 
-async function reloadServerState() {
-  const result = await requestJson("/api/state");
-  state = result.data;
+async function mergeServerState() {
+  let result;
+  try {
+    result = await requestJson("/api/state");
+  } catch {
+    return;
+  }
+  const pending = diffState(syncedState, state);
+  syncedState = structuredClone(result.data);
+  state = applyOps(result.data, pending);
   revision = result.revision;
+  if (entryEdit && !(entryEdit.kind === "task" ? state.tasks : state.logs).some((entry) => entry.id === entryEdit.id)) {
+    entryEdit = null;
+  }
+  renderPreservingFocus();
+  showToast("已同步其他页面的更新");
+  if (pending.length && !deferredSave) queueSave();
+}
+
+function renderPreservingFocus() {
+  const active = document.activeElement;
+  const editable = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+  const selection = editable ? [active.selectionStart, active.selectionEnd] : null;
+  const wasEntryEditTitle = editable && active.classList.contains("entry-edit-title");
   render();
+  if (!editable) return;
+  const target = active.isConnected ? active : wasEntryEditTitle ? document.querySelector(".entry-edit-title") : null;
+  if (!target) return;
+  if (document.activeElement !== target) target.focus();
+  try {
+    target.setSelectionRange(selection[0], selection[1]);
+  } catch {}
 }
 
 async function bootstrap() {
@@ -384,8 +590,7 @@ async function bootstrap() {
       }
     }
 
-    state = result.data;
-    revision = result.revision;
+    adoptServerState(result);
     try {
       await Promise.all([loadAiProviders(), loadAiSummarySettings(), loadProjectOptions()]);
     } catch (aiError) {
@@ -1116,6 +1321,10 @@ function renderNotes() {
   elements.noteCount.textContent = `${note.length} / 2000`;
 }
 
+function setFieldValue(field, value) {
+  if (field.value !== value) field.value = value;
+}
+
 function setOwnValue(target, key, value) {
   Object.defineProperty(target, key, {
     value,
@@ -1171,9 +1380,9 @@ function writePeriodReport(context, project, report) {
 
 function renderReview() {
   const review = readDailyReview() ?? {};
-  elements.reviewWins.value = review.wins ?? "";
-  elements.reviewBlockers.value = review.blockers ?? "";
-  elements.reviewNext.value = review.next ?? "";
+  setFieldValue(elements.reviewWins, review.wins ?? "");
+  setFieldValue(elements.reviewBlockers, review.blockers ?? "");
+  setFieldValue(elements.reviewNext, review.next ?? "");
   elements.reviewTitle.textContent = "给今天一个交代";
   elements.reviewState.textContent = review.completedAt ? `已于 ${formatTime(review.completedAt)} 完成复盘` : "内容会自动保存";
   elements.saveReview.textContent = review.completedAt ? "更新今日复盘" : "完成今日复盘";
@@ -1616,9 +1825,9 @@ function makePeriodReviewDraft(context) {
 function renderSummaryReview(context) {
   const review = readPeriodReview(context) ?? {};
   const draft = makePeriodReviewDraft(context);
-  elements.summaryWins.value = draft.wins;
-  elements.summaryNextActions.value = draft.next;
-  elements.summaryBlockers.value = review.blockers ?? "";
+  setFieldValue(elements.summaryWins, draft.wins);
+  setFieldValue(elements.summaryNextActions, draft.next);
+  setFieldValue(elements.summaryBlockers, review.blockers ?? "");
   const report = readPeriodReport(context) ?? {};
   if (elements.summaryAiReport.value !== (report.content ?? "")) elements.summaryAiReport.value = report.content ?? "";
   const periodLabel = PERIODS[summaryPeriod].reviewLabel;
@@ -2694,6 +2903,10 @@ elements.dailyNote.addEventListener("input", () => {
 
 elements.generateReview.addEventListener("click", generateReview);
 elements.saveReview.addEventListener("click", completeReview);
+window.addEventListener("pagehide", flushDeferredSave);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushDeferredSave();
+});
 elements.exportButton.addEventListener("click", exportData);
 elements.accountMenuButton.addEventListener("click", () => setAccountMenu(elements.accountMenu.hidden));
 elements.logoutButton.addEventListener("click", async () => {
