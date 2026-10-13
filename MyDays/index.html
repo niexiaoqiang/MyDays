@@ -13,7 +13,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=19" />
+    <link rel="stylesheet" href="/styles.css?v=23" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -181,6 +181,17 @@
                   placeholder="写下需要完成的事，按 Enter 保存…"
                 />
               </label>
+              <div class="capture-polish-suggestion" id="capture-polish-suggestion" aria-labelledby="capture-polish-title" hidden>
+                <div class="capture-polish-copy">
+                  <span id="capture-polish-title">AI 润色建议</span>
+                  <p id="capture-polish-text" aria-live="polite"></p>
+                  <small id="capture-polish-meta"></small>
+                </div>
+                <div class="capture-polish-actions">
+                  <button class="soft-button" id="capture-polish-adopt" type="button">采用</button>
+                  <button class="text-button" id="capture-polish-cancel" type="button">取消</button>
+                </div>
+              </div>
               <div class="capture-options">
                 <div class="capture-select project-field" data-capture-select>
                   <button class="capture-select-trigger" id="project-select-trigger" type="button" data-label="所属项目" aria-label="所属项目：无项目" aria-haspopup="listbox" aria-expanded="false" aria-controls="project-select-menu">
@@ -208,6 +219,10 @@
                     <button class="capture-select-option" type="button" role="option" data-value="low" data-tone="low" aria-selected="false">稍后</button>
                   </div>
                 </div>
+                <button class="soft-button capture-polish-button" id="capture-polish-button" type="button" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.1 3.1L16 7.2l-2.9 1.1L12 11.5l-1.1-3.2L8 7.2l2.9-1.1L12 3Zm6 8 1.2 3.3 3.3 1.2-3.3 1.2L18 20l-1.2-3.3-3.3-1.2 3.3-1.2L18 11ZM6 13l.9 2.1L9 16l-2.1.9L6 19l-.9-2.1L3 16l2.1-.9L6 13Z"/></svg>
+                  <span>AI 润色</span>
+                </button>
                 <span class="capture-hint">Enter 保存</span>
                 <button class="primary-button" type="submit">添加</button>
               </div>
@@ -376,7 +391,7 @@
               </span>
               <div class="summary-scope-copy">
                 <strong id="summary-scope-title">汇总项目范围</strong>
-                <span>指标、成果列表、快速初稿和下方周期复盘都会按当前项目分类。</span>
+                <span>指标、成果列表、刷新内容和下方周期复盘都会按当前项目分类。</span>
               </div>
               <div class="summary-project-filter">
                 <span id="summary-project-label">当前项目</span>
@@ -416,8 +431,41 @@
 
             <div class="summary-lists">
               <section class="panel summary-list-card">
-                <div class="panel-header compact"><div><p class="section-kicker">ACHIEVEMENTS</p><h2>主要成果</h2></div></div>
+                <div class="panel-header compact summary-achievement-header">
+                  <div><p class="section-kicker">ACHIEVEMENTS</p><h2>主要成果</h2></div>
+                  <div class="summary-achievement-actions" aria-label="导出主要成果">
+                    <div class="summary-export-menu-wrap">
+                      <button class="soft-button summary-export-trigger" id="summary-export-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="summary-export-menu">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14"/></svg>
+                        导出
+                        <svg class="summary-export-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                      </button>
+                      <div class="summary-export-menu" id="summary-export-menu" role="menu" aria-labelledby="summary-export-trigger" hidden>
+                        <button class="summary-export-menu-item" type="button" role="menuitem" data-export-format="markdown" tabindex="-1">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13v4m0-4 2 3 2-3v4m3-4v4m0 0 2-2m-2 2-2-2"/></svg>
+                          <span><strong>Markdown</strong><small>适合周报和文档整理</small></span>
+                        </button>
+                        <button class="summary-export-menu-item" type="button" role="menuitem" data-export-format="excel" tabindex="-1">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 12l4 6m0-6-4 6m7-6h2m-2 3h2m-2 3h2"/></svg>
+                          <span><strong>Excel</strong><small>适合表格统计和归档</small></span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <div class="summary-item-list" id="summary-achievements"></div>
+                <div class="summary-pager" id="summary-achievements-pager" hidden>
+                  <span class="summary-pager-count" id="summary-achievements-count"></span>
+                  <div class="summary-pager-controls">
+                    <button class="icon-button" id="summary-achievements-prev" type="button" aria-label="上一页">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <span class="summary-pager-page" id="summary-achievements-page"></span>
+                    <button class="icon-button" id="summary-achievements-next" type="button" aria-label="下一页">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                  </div>
+                </div>
               </section>
               <section class="panel summary-list-card">
                 <div class="panel-header compact"><div><p class="section-kicker">OPEN ITEMS</p><h2>未完成事项</h2></div></div>
@@ -430,13 +478,9 @@
                 <div>
                   <p class="section-kicker">PERIOD REVIEW</p>
                   <h2 id="summary-review-title">本周复盘</h2>
-                  <p>可先生成初稿，也可交给 AI 整理；检查修改后再保存到 SQLite。</p>
+                  <p>「主要成果」「下一周期重点」根据周期记录自动生成；「问题与反思」和「AI 总结」可手动编辑，保存到 SQLite。</p>
                 </div>
                 <div class="summary-review-actions">
-                  <button class="soft-button" id="generate-summary-review" type="button">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h10M5 17h7"/></svg>
-                    快速初稿
-                  </button>
                   <button class="primary-button summary-ai-button" id="generate-ai-summary" type="button">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
                     <span>AI 总结</span>
@@ -445,12 +489,13 @@
               </div>
               <div class="summary-ai-notice" id="summary-ai-notice">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.4c0 4.4 3.2 8.1 7.5 9.6 4.3-1.5 7.5-5.2 7.5-9.6V6L12 3Z"/><path d="M9 12.2 11 14l4-4"/></svg>
-                <span>使用 AI 总结时，当前周期的工作事项和复盘内容会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。</span>
+                <span>使用 AI 总结时，当前周期的工作事项会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。AI 总结只写入下方「AI 总结」框，不会修改上面的复盘内容。</span>
               </div>
               <div class="review-fields summary-review-fields">
-                <label><span><i class="review-dot green"></i> 主要成果</span><textarea id="summary-wins" maxlength="4000" placeholder="这一周期取得了哪些成果？"></textarea></label>
+                <label><span><i class="review-dot green"></i> 主要成果<em class="review-auto">自动</em></span><textarea id="summary-wins" maxlength="4000" readonly placeholder="根据周期记录自动生成"></textarea></label>
                 <label><span><i class="review-dot amber"></i> 问题与反思</span><textarea id="summary-blockers" maxlength="4000" placeholder="遇到了什么问题，有哪些值得反思？"></textarea></label>
-                <label><span><i class="review-dot blue"></i> 下一周期重点</span><textarea id="summary-next-actions" maxlength="4000" placeholder="下一周期最重要的行动是什么？"></textarea></label>
+                <label><span><i class="review-dot blue"></i> 下一周期重点<em class="review-auto">自动</em></span><textarea id="summary-next-actions" maxlength="4000" readonly placeholder="根据周期记录自动生成"></textarea></label>
+                <label class="summary-ai-report-field"><span><i class="review-dot green"></i> AI 总结<button class="text-button" id="copy-summary-report" type="button">复制</button></span><textarea id="summary-ai-report" maxlength="20000" placeholder="点击上方「AI 总结」根据周期记录生成，或直接在这里编写；内容自动保存，可编辑。"></textarea></label>
               </div>
               <div class="review-footer">
                 <span id="summary-review-state">内容会自动保存</span>
@@ -567,6 +612,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=19"></script>
+    <script src="/app.js?v=23"></script>
   </body>
 </html>

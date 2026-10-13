@@ -74,6 +74,12 @@ const elements = {
   captureForm: document.querySelector("#capture-form"),
   captureInput: document.querySelector("#capture-input"),
   captureTabs: [...document.querySelectorAll(".capture-tab")],
+  capturePolishButton: document.querySelector("#capture-polish-button"),
+  capturePolishSuggestion: document.querySelector("#capture-polish-suggestion"),
+  capturePolishText: document.querySelector("#capture-polish-text"),
+  capturePolishMeta: document.querySelector("#capture-polish-meta"),
+  capturePolishAdopt: document.querySelector("#capture-polish-adopt"),
+  capturePolishCancel: document.querySelector("#capture-polish-cancel"),
   projectSelect: document.querySelector("#project-select"),
   projectSelectMenu: document.querySelector("#project-select-menu"),
   prioritySelect: document.querySelector("#priority-select"),
@@ -128,15 +134,24 @@ const elements = {
   summaryTrend: document.querySelector("#summary-trend"),
   summaryProjects: document.querySelector("#summary-projects"),
   summaryAchievements: document.querySelector("#summary-achievements"),
+  summaryAchievementsPager: document.querySelector("#summary-achievements-pager"),
+  summaryAchievementsPrev: document.querySelector("#summary-achievements-prev"),
+  summaryAchievementsNext: document.querySelector("#summary-achievements-next"),
+  summaryAchievementsPage: document.querySelector("#summary-achievements-page"),
+  summaryAchievementsCount: document.querySelector("#summary-achievements-count"),
+  summaryExportTrigger: document.querySelector("#summary-export-trigger"),
+  summaryExportMenu: document.querySelector("#summary-export-menu"),
+  summaryExportItems: [...document.querySelectorAll("#summary-export-menu [role='menuitem']")],
   summaryOpenItems: document.querySelector("#summary-open-items"),
   summaryReviewTitle: document.querySelector("#summary-review-title"),
   summaryWins: document.querySelector("#summary-wins"),
   summaryBlockers: document.querySelector("#summary-blockers"),
   summaryNextActions: document.querySelector("#summary-next-actions"),
   summaryReviewState: document.querySelector("#summary-review-state"),
-  generateSummaryReview: document.querySelector("#generate-summary-review"),
-  generateAiSummary: document.querySelector("#generate-ai-summary"),
   saveSummaryReview: document.querySelector("#save-summary-review"),
+  generateAiSummary: document.querySelector("#generate-ai-summary"),
+  copySummaryReport: document.querySelector("#copy-summary-report"),
+  summaryAiReport: document.querySelector("#summary-ai-report"),
   aiNewProvider: document.querySelector("#ai-new-provider"),
   aiProviderCount: document.querySelector("#ai-provider-count"),
   aiProviderList: document.querySelector("#ai-provider-list"),
@@ -183,6 +198,8 @@ const defaultState = {
   periodReviews: {},
   projectReviews: {},
   projectPeriodReviews: {},
+  periodReports: {},
+  projectPeriodReports: {},
 };
 
 let state = structuredClone(defaultState);
@@ -194,6 +211,8 @@ let summaryAnchor = new Date();
 let summaryProject = "";
 let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let captureType = "task";
+let capturePolishLoading = false;
+let capturePolishRequestVersion = 0;
 let taskFilter = "all";
 let saveQueue = Promise.resolve();
 let saveEpoch = 0;
@@ -201,6 +220,8 @@ let deferredSaveTimer;
 let saveStateTimer;
 let toastTimer;
 let summarySaveVersion = 0;
+let summaryAiReportSaveVersion = 0;
+let summaryAchievementPage = 0;
 let aiSummaryLoading = false;
 let aiProviders = [];
 let selectedAiProviderId = null;
@@ -209,12 +230,41 @@ let aiModelsProviderId = null;
 let aiModelsRequestVersion = 0;
 let aiSummarySettingsLoaded = false;
 let projectOptions = [];
+let entryEdit = null;
 
 function setAccountMenu(open, { restoreFocus = false } = {}) {
+  if (open) closeSummaryExportMenu();
   elements.accountMenu.hidden = !open;
   elements.accountMenuButton.setAttribute("aria-expanded", String(open));
   if (open) elements.settingsLink.focus();
   else if (restoreFocus) elements.accountMenuButton.focus();
+}
+
+function closeSummaryExportMenu({ restoreFocus = false } = {}) {
+  if (elements.summaryExportMenu.hidden) return;
+  elements.summaryExportMenu.hidden = true;
+  elements.summaryExportTrigger.setAttribute("aria-expanded", "false");
+  if (restoreFocus) elements.summaryExportTrigger.focus();
+}
+
+function focusSummaryExportItem(position = "first") {
+  const index = position === "last" ? elements.summaryExportItems.length - 1 : 0;
+  elements.summaryExportItems[index]?.focus();
+}
+
+function openSummaryExportMenu({ focus = "first" } = {}) {
+  closeCaptureSelects();
+  closeEntryEditSelects();
+  setAccountMenu(false);
+  elements.summaryExportMenu.hidden = false;
+  elements.summaryExportTrigger.setAttribute("aria-expanded", "true");
+  window.requestAnimationFrame(() => focusSummaryExportItem(focus));
+}
+
+function moveSummaryExportFocus(offset) {
+  const currentIndex = elements.summaryExportItems.indexOf(document.activeElement);
+  const nextIndex = (Math.max(0, currentIndex) + offset + elements.summaryExportItems.length) % elements.summaryExportItems.length;
+  elements.summaryExportItems[nextIndex]?.focus();
 }
 
 function loadLegacyState() {
@@ -628,6 +678,7 @@ function shiftCalendarMonth(offset) {
 }
 
 function selectCalendarDate(dateKey) {
+  clearCapturePolish();
   selectedDate = dateKey;
   const selected = fromDateKey(dateKey);
   calendarCursor = new Date(selected.getFullYear(), selected.getMonth(), 1);
@@ -722,6 +773,261 @@ function renderOverview() {
   elements.overviewReviewLink.childNodes[0].textContent = `${reviewContent.action} `;
 }
 
+function renderItemActions(entry, host) {
+  const isTask = host === "task";
+  const editKind = isTask || entry.sourceTaskId ? "task" : "log";
+  const editId = isTask ? entry.id : entry.sourceTaskId || entry.id;
+  const noun = isTask ? "待办" : "工作记录";
+  return `
+    <div class="item-actions">
+      <button class="item-action edit-entry" type="button" data-edit-kind="${editKind}" data-edit-id="${escapeAttribute(editId)}" aria-label="编辑${noun}：${escapeAttribute(entry.title)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16.5-.5 4 4-.5L18.7 8.8a2.1 2.1 0 0 0 0-3l-.5-.5a2.1 2.1 0 0 0-3 0L4 16.5ZM13.8 6.7l3.5 3.5"/></svg>
+      </button>
+      <button class="item-action danger ${isTask ? "delete-task" : "delete-log"}" type="button" aria-label="删除${noun}：${escapeAttribute(entry.title)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 7l1 13h6l1-13M10 11v5M14 11v5"/></svg>
+      </button>
+    </div>`;
+}
+
+function entryEditMatches(host, hostId) {
+  return entryEdit?.host === host && entryEdit.hostId === hostId;
+}
+
+function entryEditOptions(field) {
+  if (field === "priority") {
+    return [
+      { value: "normal", label: "普通", tone: "normal" },
+      { value: "high", label: "重要", tone: "high" },
+      { value: "low", label: "稍后", tone: "low" },
+    ];
+  }
+  const current = entryEdit?.draft.project ?? "";
+  const projects = [...new Set([current, ...projectOptions].filter(Boolean))];
+  return [
+    { value: "", label: "无项目" },
+    ...projects.map((project) => ({ value: project, label: project })),
+  ];
+}
+
+function renderEntryEditSelect(field, label) {
+  const value = entryEdit.draft[field] ?? "";
+  const options = entryEditOptions(field);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+  const controlId = `entry-edit-${entryEdit.host}-${entryEdit.hostId}-${field}`;
+  return `
+    <div class="entry-edit-control">
+      <span class="entry-edit-label">${label}</span>
+      <div class="capture-select entry-edit-select ${field === "priority" ? "priority-field" : "project-field"}" data-entry-edit-select data-field="${field}">
+        <button class="capture-select-trigger" type="button" data-label="${label}" aria-label="${label}：${escapeAttribute(selected.label)}" aria-haspopup="listbox" aria-expanded="false" aria-controls="${escapeAttribute(controlId)}">
+          <span class="capture-select-value">${escapeHtml(selected.label)}</span>
+          <svg class="capture-select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+        </button>
+        <div class="capture-select-menu" id="${escapeAttribute(controlId)}" role="listbox" hidden>
+          ${options.map((option) => `<button class="capture-select-option" type="button" role="option" data-value="${escapeAttribute(option.value)}"${option.tone ? ` data-tone="${option.tone}"` : ""} aria-selected="${option.value === value}">${escapeHtml(option.label)}</button>`).join("")}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderEntryEditForm() {
+  const sourceLabel = entryEdit.kind === "task" ? "待办内容" : "工作内容";
+  const sourceHint = entryEdit.kind === "task" && entryEdit.host === "log"
+    ? '<p class="entry-edit-hint">此记录来源于已完成待办，保存后会同步更新待办与时间线。</p>'
+    : "";
+  return `
+    <form class="entry-edit-form" data-entry-edit-form>
+      <label class="entry-edit-title-field">
+        <span class="entry-edit-label">${sourceLabel}</span>
+        <input class="entry-edit-title" name="title" maxlength="120" autocomplete="off" value="${escapeAttribute(entryEdit.draft.title)}" aria-label="${sourceLabel}" required />
+      </label>
+      <div class="entry-edit-options">
+        ${renderEntryEditSelect("project", "所属项目")}
+        ${entryEdit.kind === "task" ? renderEntryEditSelect("priority", "优先级") : ""}
+      </div>
+      ${sourceHint}
+      <div class="entry-edit-actions">
+        <button class="text-button cancel-entry-edit" type="button">取消</button>
+        <button class="primary-button save-entry-edit" type="submit">保存修改</button>
+      </div>
+    </form>`;
+}
+
+function sameEntryEditTarget(kind, id, host, hostId) {
+  return entryEdit?.kind === kind && entryEdit.id === id && entryEdit.host === host && entryEdit.hostId === hostId;
+}
+
+function startEntryEdit(kind, id, host, hostId) {
+  if (sameEntryEditTarget(kind, id, host, hostId)) return;
+  if (entryEdit?.dirty && !window.confirm("当前修改尚未保存，确定放弃并编辑另一条记录吗？")) return;
+  const entry = kind === "task"
+    ? state.tasks.find((item) => item.id === id)
+    : state.logs.find((item) => item.id === id && !item.sourceTaskId);
+  if (!entry) {
+    showToast(kind === "task" ? "未找到来源待办，暂时无法编辑" : "未找到这条工作记录");
+    return;
+  }
+  const original = {
+    title: entry.title,
+    project: entry.project ?? "",
+    ...(kind === "task" ? { priority: entry.priority ?? "normal" } : {}),
+  };
+  entryEdit = {
+    kind,
+    id,
+    host,
+    hostId,
+    original,
+    draft: { ...original },
+    dirty: false,
+  };
+  closeCaptureSelects();
+  render();
+  window.requestAnimationFrame(() => document.querySelector(".entry-edit-title")?.focus());
+}
+
+function updateEntryEditDirty() {
+  if (!entryEdit) return;
+  entryEdit.dirty = Object.keys(entryEdit.original).some((field) => entryEdit.draft[field] !== entryEdit.original[field]);
+}
+
+function updateEntryEditField(field, value) {
+  if (!entryEdit || !Object.hasOwn(entryEdit.draft, field)) return;
+  entryEdit.draft[field] = value;
+  updateEntryEditDirty();
+}
+
+function closeEntryEditSelect(root, { restoreFocus = false } = {}) {
+  const trigger = root?.querySelector(".capture-select-trigger");
+  const menu = root?.querySelector(".capture-select-menu");
+  if (!trigger || !menu || menu.hidden) return;
+  menu.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+  root.classList.remove("is-open");
+  if (restoreFocus) trigger.focus();
+}
+
+function closeEntryEditSelects(except = null) {
+  document.querySelectorAll("[data-entry-edit-select]").forEach((root) => {
+    if (root !== except) closeEntryEditSelect(root);
+  });
+}
+
+function openEntryEditSelect(root) {
+  closeCaptureSelects();
+  closeEntryEditSelects(root);
+  const trigger = root.querySelector(".capture-select-trigger");
+  const menu = root.querySelector(".capture-select-menu");
+  menu.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  root.classList.add("is-open");
+  const selected = menu.querySelector('[aria-selected="true"]') ?? menu.querySelector("[role='option']");
+  window.requestAnimationFrame(() => selected?.focus());
+}
+
+function chooseEntryEditOption(root, option) {
+  const value = option.dataset.value;
+  updateEntryEditField(root.dataset.field, value);
+  root.querySelector(".capture-select-value").textContent = option.textContent;
+  root.querySelector(".capture-select-trigger").setAttribute("aria-label", `${root.querySelector(".capture-select-trigger").dataset.label}：${option.textContent}`);
+  root.querySelectorAll("[role='option']").forEach((item) => {
+    item.setAttribute("aria-selected", String(item === option));
+  });
+  closeEntryEditSelect(root, { restoreFocus: true });
+}
+
+function handleEntryEditSelectKeydown(event) {
+  const root = event.target.closest("[data-entry-edit-select]");
+  if (!root) return false;
+  const menu = root.querySelector(".capture-select-menu");
+  const trigger = root.querySelector(".capture-select-trigger");
+  const options = [...root.querySelectorAll("[role='option']")];
+  if (event.target === trigger && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    openEntryEditSelect(root);
+    const target = event.key === "ArrowUp" || event.key === "End" ? options.at(-1) : options[0];
+    window.requestAnimationFrame(() => target?.focus());
+    return true;
+  }
+  if (menu.hidden) return false;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeEntryEditSelect(root, { restoreFocus: true });
+    return true;
+  }
+  if (event.key === "Tab") {
+    closeEntryEditSelect(root);
+    return false;
+  }
+  if ((event.key === "Enter" || event.key === " ") && event.target.matches("[role='option']")) {
+    event.preventDefault();
+    chooseEntryEditOption(root, event.target);
+    return true;
+  }
+  if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    const currentIndex = Math.max(0, options.indexOf(document.activeElement));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? options.length - 1
+        : (currentIndex + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+    options[nextIndex]?.focus();
+    return true;
+  }
+  return false;
+}
+
+function cancelEntryEdit() {
+  if (!entryEdit) return;
+  const { host, hostId } = entryEdit;
+  entryEdit = null;
+  render();
+  window.requestAnimationFrame(() => {
+    const list = host === "task" ? elements.taskList : elements.timelineList;
+    [...list.querySelectorAll(host === "task" ? ".task-item" : ".timeline-item")]
+      .find((item) => item.dataset.id === hostId)
+      ?.querySelector(".edit-entry")
+      ?.focus();
+  });
+}
+
+function saveEntryEdit() {
+  if (!entryEdit) return;
+  const title = entryEdit.draft.title.trim();
+  if (!title) {
+    showToast("内容不能为空");
+    document.querySelector(".entry-edit-title")?.focus();
+    return;
+  }
+  const entry = entryEdit.kind === "task"
+    ? state.tasks.find((item) => item.id === entryEdit.id)
+    : state.logs.find((item) => item.id === entryEdit.id && !item.sourceTaskId);
+  if (!entry) {
+    showToast("记录已不存在，已退出编辑");
+    entryEdit = null;
+    render();
+    return;
+  }
+  const previousDraft = makeDailyReviewDraft(entry.date);
+  entry.title = title;
+  entry.project = entryEdit.draft.project;
+  if (entryEdit.kind === "task") {
+    entry.priority = entryEdit.draft.priority;
+    state.logs
+      .filter((log) => log.sourceTaskId === entry.id)
+      .forEach((log) => {
+        log.title = title;
+        log.project = entry.project;
+      });
+  }
+  const editedKind = entryEdit.kind;
+  entryEdit = null;
+  reconcileDailyReview(entry.date, previousDraft);
+  persist();
+  render();
+  showToast(editedKind === "task" ? "待办已更新" : "工作记录已更新");
+}
+
 function renderTasks() {
   const tasks = tasksForDate();
 
@@ -747,12 +1053,17 @@ function renderTasks() {
   const fragment = document.createDocumentFragment();
   filteredTasks.forEach((task) => {
     const item = document.createElement("article");
-    item.className = `task-item${task.completed ? " completed" : ""}`;
+    const editing = entryEditMatches("task", task.id);
+    item.className = `task-item${task.completed ? " completed" : ""}${editing ? " editing" : ""}`;
     item.dataset.id = task.id;
     const priorityLabel = task.priority === "high" ? "重要" : task.priority === "low" ? "稍后" : "普通";
     const project = task.project ? `<span class="project-chip"># ${escapeHtml(task.project)}</span>` : "";
     const priority = task.priority !== "normal" ? `<span class="priority-chip ${task.priority}">${priorityLabel}</span>` : "";
-    item.innerHTML = `
+    item.innerHTML = editing ? `
+      <button class="task-check" type="button" aria-label="${task.completed ? "已完成" : "未完成"}待办" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8"/></svg>
+      </button>
+      ${renderEntryEditForm()}` : `
       <button class="task-check" type="button" aria-label="${task.completed ? "恢复" : "完成"}待办：${escapeHtml(task.title)}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8"/></svg>
       </button>
@@ -760,9 +1071,7 @@ function renderTasks() {
         <p class="task-title" title="${escapeHtml(task.title)}">${escapeHtml(task.title)}</p>
         <div class="task-meta">${project}${priority}<span>${formatTime(task.createdAt)}</span></div>
       </div>
-      <button class="item-menu delete-task" type="button" aria-label="删除待办：${escapeHtml(task.title)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 7l1 13h6l1-13M10 11v5M14 11v5"/></svg>
-      </button>`;
+      ${renderItemActions(task, "task")}`;
     fragment.append(item);
   });
   elements.taskList.append(fragment);
@@ -785,18 +1094,17 @@ function renderTimeline() {
   const fragment = document.createDocumentFragment();
   logs.forEach((log) => {
     const item = document.createElement("article");
-    item.className = `timeline-item${log.sourceTaskId ? " auto" : ""}`;
+    const editing = entryEditMatches("log", log.id);
+    item.className = `timeline-item${log.sourceTaskId ? " auto" : ""}${editing ? " editing" : ""}`;
     item.dataset.id = log.id;
     item.innerHTML = `
       <time class="timeline-time">${formatTime(log.createdAt)}</time>
       <i class="timeline-dot"></i>
-      <div class="timeline-content">
+      ${editing ? renderEntryEditForm() : `<div class="timeline-content">
         <p title="${escapeHtml(log.title)}">${escapeHtml(log.title)}</p>
         <small>${log.sourceTaskId ? "完成待办" : "手动记录"}${log.project ? ` · ${escapeHtml(log.project)}` : ""}</small>
       </div>
-      <button class="item-menu delete-log" type="button" aria-label="删除记录：${escapeHtml(log.title)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 7l1 13h6l1-13M10 11v5M14 11v5"/></svg>
-      </button>`;
+      ${renderItemActions(log, "log")}`}`;
     fragment.append(item);
   });
   elements.timelineList.append(fragment);
@@ -841,6 +1149,24 @@ function writePeriodReview(context, project, review) {
     setOwnValue(state.projectPeriodReviews, key, Object.create(null));
   }
   setOwnValue(state.projectPeriodReviews[key], project, review);
+}
+
+function readPeriodReport(context, project = summaryProject) {
+  const key = `${summaryPeriod}:${context.startKey}`;
+  return project ? state.projectPeriodReports?.[key]?.[project] : state.periodReports[key];
+}
+
+function writePeriodReport(context, project, report) {
+  const key = `${summaryPeriod}:${context.startKey}`;
+  if (!project) {
+    state.periodReports[key] = report;
+    return;
+  }
+  state.projectPeriodReports ??= {};
+  if (!Object.hasOwn(state.projectPeriodReports, key)) {
+    setOwnValue(state.projectPeriodReports, key, Object.create(null));
+  }
+  setOwnValue(state.projectPeriodReports[key], project, report);
 }
 
 function renderReview() {
@@ -1010,11 +1336,291 @@ function renderSummaryList(element, items, emptyText) {
   `).join("");
 }
 
+const ACHIEVEMENTS_PER_PAGE = 10;
+
+function getAchievements(context) {
+  return [
+    ...context.tasks.filter((task) => task.completed).map((task) => ({
+      title: task.title,
+      date: task.date,
+      project: task.project?.trim() || "未分类",
+      type: "完成待办",
+    })),
+    ...context.logs.filter((log) => !log.sourceTaskId).map((log) => ({
+      title: log.title,
+      date: log.date,
+      project: log.project?.trim() || "未分类",
+      type: "工作记录",
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function escapeMarkdownInline(value) {
+  return String(value)
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line
+      .replaceAll("\\", "\\\\")
+      .replace(/([`*_[\]|<>~])/g, "\\$1")
+      .replace(/^(\s*)([#\-+]|\d+\.)\s/, "$1\\$2 "))
+    .join("  \n   ");
+}
+
+function sanitizeFilenamePart(value) {
+  const safe = String(value)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.\s-]+|[.\s-]+$/g, "")
+    .slice(0, 64);
+  return safe || "未命名";
+}
+
+function getAchievementExportSnapshot() {
+  const context = getSummaryContext();
+  return {
+    achievements: getAchievements(context),
+    periodHeading: formatPeriodHeading(summaryPeriod, context.start),
+    periodIdentifier: `${summaryPeriod}-${context.startKey}`,
+    dateRange: `${context.startKey} — ${context.endKey}`,
+    projectScope: summaryProject || "全部项目",
+    exportedAt: new Date(),
+  };
+}
+
+function makeAchievementFilename(snapshot, extension) {
+  return [
+    "MyDays",
+    "主要成果",
+    sanitizeFilenamePart(snapshot.periodIdentifier),
+    sanitizeFilenamePart(snapshot.projectScope),
+  ].join("-") + `.${extension}`;
+}
+
+function serializeAchievementsMarkdown(snapshot) {
+  const exportTime = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(snapshot.exportedAt);
+  const items = snapshot.achievements.map((achievement, index) => [
+    `${index + 1}. **${escapeMarkdownInline(achievement.date)}｜${escapeMarkdownInline(achievement.project)}｜${escapeMarkdownInline(achievement.type)}**  `,
+    `   ${escapeMarkdownInline(achievement.title)}`,
+  ].join("\n")).join("\n\n");
+  return [
+    `# MyDays · ${escapeMarkdownInline(snapshot.periodHeading)}主要成果`,
+    "",
+    `- 日期范围：${escapeMarkdownInline(snapshot.dateRange)}`,
+    `- 项目范围：${escapeMarkdownInline(snapshot.projectScope)}`,
+    `- 导出时间：${escapeMarkdownInline(exportTime)}`,
+    "",
+    "## 主要成果",
+    "",
+    items,
+    "",
+  ].join("\n");
+}
+
+function xmlEscape(value) {
+  return String(value)
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  bytes.forEach((byte) => { crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8); });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function concatBytes(chunks) {
+  const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return result;
+}
+
+function zipDateTime(date) {
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    time: ((date.getHours() & 0x1f) << 11) | ((date.getMinutes() & 0x3f) << 5) | ((date.getSeconds() / 2) & 0x1f),
+    date: (((year - 1980) & 0x7f) << 9) | (((date.getMonth() + 1) & 0x0f) << 5) | (date.getDate() & 0x1f),
+  };
+}
+
+function createStoredZip(files, modifiedAt = new Date()) {
+  const encoder = new TextEncoder();
+  const localChunks = [];
+  const centralChunks = [];
+  const { time, date } = zipDateTime(modifiedAt);
+  let localOffset = 0;
+
+  files.forEach(({ name, content }) => {
+    const nameBytes = encoder.encode(name);
+    const data = typeof content === "string" ? encoder.encode(content) : content;
+    const checksum = crc32(data);
+    const localHeader = new Uint8Array(30);
+    const localView = new DataView(localHeader.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0x0800, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint16(10, time, true);
+    localView.setUint16(12, date, true);
+    localView.setUint32(14, checksum, true);
+    localView.setUint32(18, data.length, true);
+    localView.setUint32(22, data.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    localView.setUint16(28, 0, true);
+    localChunks.push(localHeader, nameBytes, data);
+
+    const centralHeader = new Uint8Array(46);
+    const centralView = new DataView(centralHeader.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0x0800, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint16(12, time, true);
+    centralView.setUint16(14, date, true);
+    centralView.setUint32(16, checksum, true);
+    centralView.setUint32(20, data.length, true);
+    centralView.setUint32(24, data.length, true);
+    centralView.setUint16(28, nameBytes.length, true);
+    centralView.setUint16(30, 0, true);
+    centralView.setUint16(32, 0, true);
+    centralView.setUint16(34, 0, true);
+    centralView.setUint16(36, 0, true);
+    centralView.setUint32(38, 0, true);
+    centralView.setUint32(42, localOffset, true);
+    centralChunks.push(centralHeader, nameBytes);
+    localOffset += localHeader.length + nameBytes.length + data.length;
+  });
+
+  const centralDirectory = concatBytes(centralChunks);
+  const endRecord = new Uint8Array(22);
+  const endView = new DataView(endRecord.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(4, 0, true);
+  endView.setUint16(6, 0, true);
+  endView.setUint16(8, files.length, true);
+  endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralDirectory.length, true);
+  endView.setUint32(16, localOffset, true);
+  endView.setUint16(20, 0, true);
+  return concatBytes([...localChunks, centralDirectory, endRecord]);
+}
+
+function createAchievementsWorkbook(achievements, exportedAt = new Date()) {
+  const columns = ["A", "B", "C", "D"];
+  const rows = [["日期", "项目", "类型", "主要成果"], ...achievements.map((achievement) => [
+    achievement.date,
+    achievement.project,
+    achievement.type,
+    achievement.title,
+  ])];
+  const sheetRows = rows.map((row, rowIndex) => {
+    const cells = row.map((value, columnIndex) => `<c r="${columns[columnIndex]}${rowIndex + 1}" t="inlineStr"${rowIndex === 0 ? ' s="1"' : ""}><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`).join("");
+    return `<row r="${rowIndex + 1}">${cells}</row>`;
+  }).join("");
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:D${rows.length}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="13" customWidth="1"/><col min="2" max="2" width="22" customWidth="1"/><col min="3" max="3" width="14" customWidth="1"/><col min="4" max="4" width="60" customWidth="1"/></cols><sheetData>${sheetRows}</sheetData><autoFilter ref="A1:D${rows.length}"/></worksheet>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF386A52"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+  return createStoredZip([
+    { name: "[Content_Types].xml", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+    { name: "_rels/.rels", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: "xl/workbook.xml", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="主要成果" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+    { name: "xl/_rels/workbook.xml.rels", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { name: "xl/worksheets/sheet1.xml", content: worksheet },
+    { name: "xl/styles.xml", content: styles },
+  ], exportedAt);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.hidden = true;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportSummaryAchievements(format) {
+  const snapshot = getAchievementExportSnapshot();
+  if (!snapshot.achievements.length) {
+    showToast("当前范围没有可导出的主要成果");
+    return;
+  }
+  if (format === "markdown") {
+    downloadBlob(
+      new Blob([serializeAchievementsMarkdown(snapshot)], { type: "text/markdown;charset=utf-8" }),
+      makeAchievementFilename(snapshot, "md"),
+    );
+    showToast(`已导出 ${snapshot.achievements.length} 项 Markdown 成果`);
+    return;
+  }
+  const workbook = createAchievementsWorkbook(snapshot.achievements, snapshot.exportedAt);
+  downloadBlob(
+    new Blob([workbook], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    makeAchievementFilename(snapshot, "xlsx"),
+  );
+  showToast(`已导出 ${snapshot.achievements.length} 项 Excel 成果`);
+}
+
+function renderAchievements(items) {
+  const totalPages = Math.max(1, Math.ceil(items.length / ACHIEVEMENTS_PER_PAGE));
+  if (summaryAchievementPage >= totalPages) summaryAchievementPage = totalPages - 1;
+  const start = summaryAchievementPage * ACHIEVEMENTS_PER_PAGE;
+  renderSummaryList(elements.summaryAchievements, items.slice(start, start + ACHIEVEMENTS_PER_PAGE), "这个周期还没有可展示的成果");
+  elements.summaryAchievementsPager.hidden = items.length === 0;
+  elements.summaryAchievements.classList.toggle("is-paging", items.length > ACHIEVEMENTS_PER_PAGE);
+  elements.summaryAchievementsCount.textContent = `共 ${items.length} 项`;
+  elements.summaryAchievementsPage.textContent = `${summaryAchievementPage + 1} / ${totalPages}`;
+  elements.summaryAchievementsPrev.disabled = summaryAchievementPage <= 0;
+  elements.summaryAchievementsNext.disabled = summaryAchievementPage >= totalPages - 1;
+}
+
+function makePeriodReviewDraft(context) {
+  const completed = context.tasks.filter((task) => task.completed).map((task) => task.title);
+  const manualLogs = context.logs.filter((log) => !log.sourceTaskId).map((log) => log.title);
+  const openTasks = context.tasks.filter((task) => !task.completed).map((task) => task.title);
+  return {
+    wins: [...completed, ...manualLogs].map((title) => `• ${title}`).join("\n"),
+    next: openTasks.map((title) => `• ${title}`).join("\n"),
+  };
+}
+
 function renderSummaryReview(context) {
   const review = readPeriodReview(context) ?? {};
-  if (elements.summaryWins.value !== (review.wins ?? "")) elements.summaryWins.value = review.wins ?? "";
-  if (elements.summaryBlockers.value !== (review.blockers ?? "")) elements.summaryBlockers.value = review.blockers ?? "";
-  if (elements.summaryNextActions.value !== (review.next ?? "")) elements.summaryNextActions.value = review.next ?? "";
+  const draft = makePeriodReviewDraft(context);
+  elements.summaryWins.value = draft.wins;
+  elements.summaryNextActions.value = draft.next;
+  elements.summaryBlockers.value = review.blockers ?? "";
+  const report = readPeriodReport(context) ?? {};
+  if (elements.summaryAiReport.value !== (report.content ?? "")) elements.summaryAiReport.value = report.content ?? "";
   const periodLabel = PERIODS[summaryPeriod].reviewLabel;
   elements.summaryReviewTitle.textContent = `${formatPeriodHeading(summaryPeriod, context.start)}${summaryProject ? ` · ${summaryProject}` : ""}复盘`;
   elements.summaryReviewState.textContent = review.completedAt ? `已于 ${formatTime(review.completedAt)} 完成复盘` : "内容会自动保存";
@@ -1045,12 +1651,10 @@ function renderSummary() {
   elements.summaryDaysTotal.textContent = `共 ${context.days.length} 天`;
   renderTrend(context);
   renderProjects(context);
-  const achievements = [
-    ...context.tasks.filter((task) => task.completed).map((task) => ({ title: task.title, date: task.date })),
-    ...context.logs.filter((log) => !log.sourceTaskId).map((log) => ({ title: log.title, date: log.date })),
-  ].sort((a, b) => b.date.localeCompare(a.date));
+  summaryAchievementPage = 0;
+  const achievements = getAchievements(context);
   const openItems = context.tasks.filter((task) => !task.completed).sort((a, b) => a.date.localeCompare(b.date));
-  renderSummaryList(elements.summaryAchievements, achievements, "这个周期还没有可展示的成果");
+  renderAchievements(achievements);
   renderSummaryList(elements.summaryOpenItems, openItems, "这个周期没有未完成事项");
   renderSummaryReview(context);
 }
@@ -1077,29 +1681,27 @@ function saveSummaryReviewDraft({ defer = false } = {}) {
   });
 }
 
-function generateSummaryReview() {
+function saveSummaryAiReportDraft({ defer = false, successMessage = "已保存到 SQLite", onSaved } = {}) {
   const context = getSummaryContext();
-  const achievements = [
-    ...context.tasks.filter((task) => task.completed).map((task) => task.title),
-    ...context.logs.filter((log) => !log.sourceTaskId).map((log) => log.title),
-  ];
-  const openItems = context.tasks.filter((task) => !task.completed).map((task) => task.title);
-  if (!achievements.length && !openItems.length) {
-    showToast(`${summaryProject || "这个周期"}还没有工作记录可供整理`);
-    return;
-  }
-  if ((elements.summaryWins.value.trim() || elements.summaryNextActions.value.trim())
-    && !window.confirm("生成初稿会覆盖已有的主要成果和下一周期重点，是否继续？")) return;
-  elements.summaryWins.value = achievements.slice(0, 12).map((title) => `• ${title}`).join("\n");
-  elements.summaryNextActions.value = openItems.slice(0, 8).map((title) => `• ${title}`).join("\n");
-  saveSummaryReviewDraft();
-  showToast("已根据周期记录生成复盘初稿");
+  writePeriodReport(context, summaryProject, { content: elements.summaryAiReport.value });
+  const saveVersion = ++summaryAiReportSaveVersion;
+  elements.summaryReviewState.textContent = "保存中…";
+  persist({
+    defer,
+    onSaved: () => {
+      if (saveVersion !== summaryAiReportSaveVersion) return;
+      elements.summaryReviewState.textContent = successMessage;
+      onSaved?.();
+    },
+    onError: () => {
+      if (saveVersion === summaryAiReportSaveVersion) elements.summaryReviewState.textContent = "保存失败，请重试";
+    },
+  });
 }
 
 function setAiSummaryLoading(loading) {
   aiSummaryLoading = loading;
   elements.generateAiSummary.disabled = loading;
-  elements.generateSummaryReview.disabled = loading;
   elements.generateAiSummary.classList.toggle("loading", loading);
   elements.generateAiSummary.querySelector("span").textContent = loading ? "AI 正在整理…" : "AI 总结";
   elements.generateAiSummary.setAttribute("aria-busy", String(loading));
@@ -1107,17 +1709,15 @@ function setAiSummaryLoading(loading) {
 
 async function generateAiSummary() {
   if (aiSummaryLoading) return;
-  const fields = [elements.summaryWins, elements.summaryBlockers, elements.summaryNextActions];
-  const existingValues = fields.map((field) => field.value);
-  if (existingValues.some((value) => value.trim())
-    && !window.confirm("AI 总结会覆盖当前三个复盘输入框的内容，是否继续？")) return;
+  const existingValue = elements.summaryAiReport.value;
+  if (existingValue.trim() && !window.confirm("AI 总结会覆盖当前「AI 总结」编辑框的内容，是否继续？")) return;
   const context = getSummaryContext();
   const requestedPeriod = summaryPeriod;
   const requestedProject = summaryProject;
   setAiSummaryLoading(true);
   elements.summaryReviewState.textContent = "AI 正在整理当前周期…";
   try {
-    const result = await requestJson("/api/ai/period-summary", {
+    const result = await requestJson("/api/ai/period-report", {
       method: "POST",
       body: JSON.stringify({
         periodType: requestedPeriod,
@@ -1131,16 +1731,16 @@ async function generateAiSummary() {
       showToast("周期已切换，请在当前周期重新生成 AI 总结");
       return;
     }
-    if (fields.some((field, index) => field.value !== existingValues[index])) {
+    if (elements.summaryAiReport.value !== existingValue) {
       elements.summaryReviewState.textContent = "内容已被编辑，本次 AI 结果未覆盖";
       showToast("检测到你正在编辑，AI 结果未覆盖当前内容");
       return;
     }
-    elements.summaryWins.value = result.summary.wins;
-    elements.summaryBlockers.value = result.summary.blockers;
-    elements.summaryNextActions.value = result.summary.next;
-    elements.summaryReviewState.textContent = `由 ${result.provider} · ${result.model} 生成，检查后保存`;
-    showToast("AI 总结已生成，请检查修改后保存");
+    elements.summaryAiReport.value = result.report;
+    saveSummaryAiReportDraft({
+      successMessage: `由 ${result.provider} · ${result.model} 生成并已保存`,
+      onSaved: () => showToast("AI 总结已生成并保存到 SQLite"),
+    });
   } catch (error) {
     elements.summaryReviewState.textContent = "AI 总结失败，原内容未改变";
     if (["AI_DEFAULT_PROVIDER_MISSING", "AI_KEY_MISSING", "AI_KEY_UNREADABLE", "AI_MODEL_MISSING"].includes(error.code)) {
@@ -1151,6 +1751,24 @@ async function generateAiSummary() {
   } finally {
     setAiSummaryLoading(false);
   }
+}
+
+async function copySummaryReport() {
+  const text = elements.summaryAiReport.value.trim();
+  if (!text) {
+    showToast("还没有可复制的 AI 总结内容");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    elements.summaryAiReport.focus();
+    elements.summaryAiReport.select();
+    const copied = document.execCommand("copy");
+    elements.summaryAiReport.setSelectionRange(0, 0);
+    if (!copied) throw new Error("copy-failed");
+  }
+  showToast("AI 总结已复制");
 }
 
 function completeSummaryReview() {
@@ -1255,12 +1873,14 @@ async function addProjectOption(event) {
 }
 
 async function renameProjectOption(row) {
+  if (row.dataset.saving === "true") return;
   const currentName = row.dataset.name;
   const name = row.querySelector("input").value.trim();
   if (!name || name === currentName) {
     row.querySelector("input").value = currentName;
     return;
   }
+  row.dataset.saving = "true";
   try {
     const selectedProject = elements.projectSelect.value;
     const result = await requestJson(`/api/projects/${encodeURIComponent(currentName)}`, {
@@ -1275,6 +1895,8 @@ async function renameProjectOption(row) {
   } catch (error) {
     row.querySelector("input").value = currentName;
     elements.projectDialogState.textContent = error.message;
+  } finally {
+    if (row.isConnected) delete row.dataset.saving;
   }
 }
 
@@ -1534,6 +2156,7 @@ async function clearSelectedAiKey() {
 
 function setCaptureType(type, { focus = true } = {}) {
   closeCaptureSelects();
+  clearCapturePolish();
   captureType = type;
   elements.captureTabs.forEach((tab) => {
     const active = tab.dataset.type === type;
@@ -1545,6 +2168,72 @@ function setCaptureType(type, { focus = true } = {}) {
     ? "写下需要完成的事，按 Enter 保存…"
     : "记录刚刚完成的工作，按 Enter 保存…";
   if (focus) elements.captureInput.focus();
+}
+
+function syncCapturePolishAvailability() {
+  elements.capturePolishButton.disabled = capturePolishLoading || !elements.captureInput.value.trim();
+}
+
+function setCapturePolishLoading(loading) {
+  capturePolishLoading = loading;
+  elements.capturePolishButton.classList.toggle("loading", loading);
+  elements.capturePolishButton.setAttribute("aria-busy", String(loading));
+  elements.capturePolishButton.querySelector("span").textContent = loading ? "润色中…" : "AI 润色";
+  syncCapturePolishAvailability();
+}
+
+function clearCapturePolish({ invalidate = true } = {}) {
+  if (invalidate) capturePolishRequestVersion += 1;
+  elements.capturePolishSuggestion.hidden = true;
+  elements.capturePolishText.textContent = "";
+  elements.capturePolishMeta.textContent = "";
+  if (capturePolishLoading) setCapturePolishLoading(false);
+  else syncCapturePolishAvailability();
+}
+
+async function polishCapture() {
+  const sourceText = elements.captureInput.value.trim();
+  if (!sourceText) {
+    elements.captureInput.focus();
+    showToast("先写下要润色的内容");
+    return;
+  }
+  const requestedType = captureType;
+  const requestVersion = ++capturePolishRequestVersion;
+  elements.capturePolishSuggestion.hidden = true;
+  elements.capturePolishText.textContent = "";
+  elements.capturePolishMeta.textContent = "";
+  setCapturePolishLoading(true);
+  try {
+    const result = await requestJson("/api/ai/polish-entry", {
+      method: "POST",
+      body: JSON.stringify({ type: requestedType, text: sourceText }),
+    });
+    if (requestVersion !== capturePolishRequestVersion
+      || captureType !== requestedType
+      || elements.captureInput.value.trim() !== sourceText) return;
+    elements.capturePolishText.textContent = result.polished;
+    elements.capturePolishMeta.textContent = `${result.provider} · ${result.model} · 仅供确认，不会自动保存`;
+    elements.capturePolishSuggestion.hidden = false;
+  } catch (error) {
+    if (requestVersion !== capturePolishRequestVersion) return;
+    if (["AI_DEFAULT_PROVIDER_MISSING", "AI_KEY_MISSING", "AI_KEY_UNREADABLE", "AI_MODEL_MISSING"].includes(error.code)) {
+      showToast(`${error.message}，请前往 AI 设置`);
+    } else {
+      showToast(`AI 润色失败：${error.message}`);
+    }
+  } finally {
+    if (requestVersion === capturePolishRequestVersion) setCapturePolishLoading(false);
+  }
+}
+
+function adoptCapturePolish() {
+  const polished = elements.capturePolishText.textContent;
+  if (!polished || elements.capturePolishSuggestion.hidden) return;
+  elements.captureInput.value = polished;
+  clearCapturePolish();
+  elements.captureInput.focus();
+  showToast("已采用润色建议，确认后再添加");
 }
 
 function syncCaptureSelect(root) {
@@ -1587,6 +2276,7 @@ function focusCaptureOption(root, position = "selected") {
 }
 
 function openCaptureSelect(root, { focus = "selected" } = {}) {
+  closeSummaryExportMenu();
   closeCaptureSelects(root);
   const trigger = root.querySelector(".capture-select-trigger");
   const menu = root.querySelector(".capture-select-menu");
@@ -1615,6 +2305,7 @@ function navigateTo(pathname, { replace = false } = {}) {
   const normalizedPath = normalizePath(pathname);
   const nextRoute = ROUTES[normalizedPath];
   if (!nextRoute) return;
+  closeSummaryExportMenu();
   closeCaptureSelects();
   if (replace) window.history.replaceState({}, "", normalizedPath);
   else window.history.pushState({}, "", normalizedPath);
@@ -1624,6 +2315,7 @@ function navigateTo(pathname, { replace = false } = {}) {
 }
 
 function changeDate(offset) {
+  clearCapturePolish();
   const date = fromDateKey(selectedDate);
   date.setDate(date.getDate() + offset);
   selectedDate = toDateKey(date);
@@ -1666,6 +2358,7 @@ function addCapture(event) {
   }
 
   elements.captureInput.value = "";
+  clearCapturePolish();
   reconcileDailyReview(selectedDate, previousDraft);
   persist();
   render();
@@ -1704,6 +2397,7 @@ function deleteTask(id) {
   const previousDraft = makeDailyReviewDraft(task.date);
   state.tasks = state.tasks.filter((entry) => entry.id !== id);
   state.logs = state.logs.filter((log) => log.sourceTaskId !== id);
+  if (entryEdit?.kind === "task" && entryEdit.id === id) entryEdit = null;
   reconcileDailyReview(task.date, previousDraft);
   persist();
   render();
@@ -1715,6 +2409,7 @@ function deleteLog(id) {
   if (!log || !window.confirm(`确定删除工作记录“${log.title}”吗？`)) return;
   const previousDraft = makeDailyReviewDraft(log.date);
   state.logs = state.logs.filter((entry) => entry.id !== id);
+  if ((entryEdit?.kind === "log" && entryEdit.id === id) || (entryEdit?.host === "log" && entryEdit.hostId === id)) entryEdit = null;
   reconcileDailyReview(log.date, previousDraft);
   persist();
   render();
@@ -1806,18 +2501,22 @@ function exportData() {
     null,
     2,
   );
-  const blob = new Blob([content], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `mydays-backup-${toDateKey(new Date())}.json`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(
+    new Blob([content], { type: "application/json" }),
+    `mydays-backup-${toDateKey(new Date())}.json`,
+  );
   showToast("数据备份已导出");
 }
 
 elements.captureTabs.forEach((tab) => tab.addEventListener("click", () => setCaptureType(tab.dataset.type)));
 elements.captureForm.addEventListener("submit", addCapture);
+elements.captureInput.addEventListener("input", () => clearCapturePolish());
+elements.capturePolishButton.addEventListener("click", polishCapture);
+elements.capturePolishAdopt.addEventListener("click", adoptCapturePolish);
+elements.capturePolishCancel.addEventListener("click", () => {
+  clearCapturePolish();
+  elements.captureInput.focus();
+});
 
 elements.captureSelects.forEach((root) => {
   const trigger = root.querySelector(".capture-select-trigger");
@@ -1906,13 +2605,81 @@ elements.filterTabs.forEach((tab) => {
 elements.taskList.addEventListener("click", (event) => {
   const item = event.target.closest(".task-item");
   if (!item) return;
+  const editSelect = event.target.closest("[data-entry-edit-select]");
+  const option = event.target.closest(".capture-select-option");
+  if (editSelect && option) {
+    chooseEntryEditOption(editSelect, option);
+    return;
+  }
+  if (editSelect && event.target.closest(".capture-select-trigger")) {
+    const menu = editSelect.querySelector(".capture-select-menu");
+    if (menu.hidden) openEntryEditSelect(editSelect);
+    else closeEntryEditSelect(editSelect, { restoreFocus: true });
+    return;
+  }
+  if (event.target.closest(".cancel-entry-edit")) {
+    cancelEntryEdit();
+    return;
+  }
+  const editButton = event.target.closest(".edit-entry");
+  if (editButton) {
+    startEntryEdit(editButton.dataset.editKind, editButton.dataset.editId, "task", item.dataset.id);
+    return;
+  }
+  if (event.target.closest(".delete-task")) {
+    deleteTask(item.dataset.id);
+    return;
+  }
   if (event.target.closest(".task-check")) toggleTask(item.dataset.id);
-  if (event.target.closest(".delete-task")) deleteTask(item.dataset.id);
+});
+elements.taskList.addEventListener("submit", (event) => {
+  if (!event.target.matches("[data-entry-edit-form]")) return;
+  event.preventDefault();
+  saveEntryEdit();
+});
+elements.taskList.addEventListener("input", (event) => {
+  if (event.target.matches(".entry-edit-title")) updateEntryEditField("title", event.target.value);
+});
+elements.taskList.addEventListener("keydown", (event) => {
+  if (handleEntryEditSelectKeydown(event)) event.stopPropagation();
 });
 
 elements.timelineList.addEventListener("click", (event) => {
   const item = event.target.closest(".timeline-item");
-  if (item && event.target.closest(".delete-log")) deleteLog(item.dataset.id);
+  if (!item) return;
+  const editSelect = event.target.closest("[data-entry-edit-select]");
+  const option = event.target.closest(".capture-select-option");
+  if (editSelect && option) {
+    chooseEntryEditOption(editSelect, option);
+    return;
+  }
+  if (editSelect && event.target.closest(".capture-select-trigger")) {
+    const menu = editSelect.querySelector(".capture-select-menu");
+    if (menu.hidden) openEntryEditSelect(editSelect);
+    else closeEntryEditSelect(editSelect, { restoreFocus: true });
+    return;
+  }
+  if (event.target.closest(".cancel-entry-edit")) {
+    cancelEntryEdit();
+    return;
+  }
+  const editButton = event.target.closest(".edit-entry");
+  if (editButton) {
+    startEntryEdit(editButton.dataset.editKind, editButton.dataset.editId, "log", item.dataset.id);
+    return;
+  }
+  if (event.target.closest(".delete-log")) deleteLog(item.dataset.id);
+});
+elements.timelineList.addEventListener("submit", (event) => {
+  if (!event.target.matches("[data-entry-edit-form]")) return;
+  event.preventDefault();
+  saveEntryEdit();
+});
+elements.timelineList.addEventListener("input", (event) => {
+  if (event.target.matches(".entry-edit-title")) updateEntryEditField("title", event.target.value);
+});
+elements.timelineList.addEventListener("keydown", (event) => {
+  if (handleEntryEditSelectKeydown(event)) event.stopPropagation();
 });
 
 elements.dailyNote.addEventListener("input", () => {
@@ -1959,8 +2726,55 @@ elements.summaryProjectFilter.addEventListener("change", () => {
 [elements.summaryWins, elements.summaryBlockers, elements.summaryNextActions].forEach((field) => {
   field.addEventListener("input", () => saveSummaryReviewDraft({ defer: true }));
 });
-elements.generateSummaryReview.addEventListener("click", generateSummaryReview);
+elements.summaryAchievementsPrev.addEventListener("click", () => {
+  if (summaryAchievementPage > 0) {
+    summaryAchievementPage -= 1;
+    renderAchievements(getAchievements(getSummaryContext()));
+  }
+});
+elements.summaryAchievementsNext.addEventListener("click", () => {
+  summaryAchievementPage += 1;
+  renderAchievements(getAchievements(getSummaryContext()));
+});
+elements.summaryExportTrigger.addEventListener("click", () => {
+  if (elements.summaryExportMenu.hidden) openSummaryExportMenu();
+  else closeSummaryExportMenu({ restoreFocus: true });
+});
+elements.summaryExportTrigger.addEventListener("keydown", (event) => {
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  openSummaryExportMenu({ focus: event.key === "ArrowUp" || event.key === "End" ? "last" : "first" });
+});
+elements.summaryExportMenu.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-export-format]");
+  if (!item) return;
+  const format = item.dataset.exportFormat;
+  closeSummaryExportMenu({ restoreFocus: true });
+  exportSummaryAchievements(format);
+});
+elements.summaryExportMenu.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSummaryExportMenu({ restoreFocus: true });
+    return;
+  }
+  if (event.key === "Tab") {
+    closeSummaryExportMenu();
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveSummaryExportFocus(event.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (event.key === "Home" || event.key === "End") {
+    event.preventDefault();
+    focusSummaryExportItem(event.key === "Home" ? "first" : "last");
+  }
+});
 elements.generateAiSummary.addEventListener("click", generateAiSummary);
+elements.copySummaryReport.addEventListener("click", copySummaryReport);
+elements.summaryAiReport.addEventListener("input", () => saveSummaryAiReportDraft({ defer: true }));
 elements.saveSummaryReview.addEventListener("click", completeSummaryReview);
 elements.aiNewProvider.addEventListener("click", resetAiProviderForm);
 elements.aiProviderList.addEventListener("click", (event) => {
@@ -1994,6 +2808,7 @@ elements.aiPromptReset.addEventListener("click", resetAiSummaryPrompt);
 elements.previousDay.addEventListener("click", () => changeDate(-1));
 elements.nextDay.addEventListener("click", () => changeDate(1));
 elements.todayButton.addEventListener("click", () => {
+  clearCapturePolish();
   selectedDate = toDateKey(new Date());
   render();
 });
@@ -2025,7 +2840,9 @@ elements.calendarGrid.addEventListener("keydown", (event) => {
 
 document.addEventListener("pointerdown", (event) => {
   if (!elements.accountMenu.hidden && !event.target.closest(".account-menu-wrap")) setAccountMenu(false);
+  if (!elements.summaryExportMenu.hidden && !event.target.closest(".summary-export-menu-wrap")) closeSummaryExportMenu();
   if (!event.target.closest("[data-capture-select]")) closeCaptureSelects();
+  if (!event.target.closest("[data-entry-edit-select]")) closeEntryEditSelects();
   if (elements.calendarPopover.hidden) return;
   if (!elements.calendarPopover.contains(event.target) && !elements.datePickerButton.contains(event.target)) {
     closeCalendar();
@@ -2055,6 +2872,7 @@ document.addEventListener("click", (event) => {
 });
 
 window.addEventListener("popstate", () => {
+  closeSummaryExportMenu();
   closeCaptureSelects();
   currentRoute = resolveRoute(window.location.pathname);
   render();
@@ -2067,10 +2885,22 @@ document.addEventListener("keydown", (event) => {
     closeProjectDialog();
     return;
   }
+  if (event.key === "Escape" && !elements.summaryExportMenu.hidden) {
+    event.preventDefault();
+    closeSummaryExportMenu({ restoreFocus: true });
+    return;
+  }
   const openCaptureSelectRoot = elements.captureSelects.find((root) => !root.querySelector(".capture-select-menu").hidden);
   if (event.key === "Escape" && openCaptureSelectRoot) {
     event.preventDefault();
     closeCaptureSelect(openCaptureSelectRoot, { restoreFocus: true });
+    return;
+  }
+  const openEntryEditSelectRoot = [...document.querySelectorAll("[data-entry-edit-select]")]
+    .find((root) => !root.querySelector(".capture-select-menu").hidden);
+  if (event.key === "Escape" && openEntryEditSelectRoot) {
+    event.preventDefault();
+    closeEntryEditSelect(openEntryEditSelectRoot, { restoreFocus: true });
     return;
   }
   if (event.key === "Escape" && !elements.accountMenu.hidden) {

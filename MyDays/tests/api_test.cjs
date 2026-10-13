@@ -25,6 +25,8 @@ const emptyState = {
   periodReviews: {},
   projectReviews: {},
   projectPeriodReviews: {},
+  periodReports: {},
+  projectPeriodReports: {},
 };
 const legacyState = {
   tasks: [{
@@ -68,11 +70,38 @@ async function waitForServer() {
   try {
     await waitForServer();
 
+    const loginPageResponse = await fetch(`${baseUrl}/login`);
+    assert.equal(loginPageResponse.status, 200, "/login 应返回登录页面");
+    assert.match(await loginPageResponse.text(), /styles\.css\?v=23/);
+
     for (const route of ["/", "/tasks", "/timeline", "/review", "/summary", "/ai-settings", "/tasks/"]) {
       const pageResponse = await fetch(`${baseUrl}${route}`);
       assert.equal(pageResponse.status, 200, `${route} 应返回应用页面`);
-      assert.match(await pageResponse.text(), /data-route="today"/);
+      const pageHtml = await pageResponse.text();
+      assert.match(pageHtml, /data-route="today"/);
+      assert.match(pageHtml, /styles\.css\?v=23/);
+      assert.match(pageHtml, /app\.js\?v=23/);
+      assert.match(pageHtml, /id="summary-export-trigger"[^>]+aria-haspopup="menu"[^>]+aria-expanded="false"/);
+      assert.match(pageHtml, /id="summary-export-menu" role="menu"/);
+      assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="markdown"/);
+      assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="excel"/);
+      assert.doesNotMatch(pageHtml, /id="summary-export-(markdown|excel)"/);
     }
+    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=23`);
+    assert.equal(appScriptResponse.headers.get("cache-control"), "no-cache", "应用脚本必须重新验证，避免容器升级后继续使用旧版本");
+    const appScript = await appScriptResponse.text();
+    assert.match(appScript, /renderItemActions/);
+    assert.match(appScript, /serializeAchievementsMarkdown/);
+    assert.match(appScript, /createAchievementsWorkbook/);
+    assert.match(appScript, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+    assert.match(appScript, /closeSummaryExportMenu/);
+    assert.match(appScript, /moveSummaryExportFocus/);
+    const stylesheetResponse = await fetch(`${baseUrl}/styles.css?v=23`);
+    assert.equal(stylesheetResponse.headers.get("cache-control"), "no-cache", "应用样式必须重新验证，避免与旧脚本混用");
+    const stylesheet = await stylesheetResponse.text();
+    assert.match(stylesheet, /\.item-action/);
+    assert.match(stylesheet, /\.summary-achievement-actions/);
+    assert.match(stylesheet, /\.summary-export-menu-item/);
     const missingPage = await fetch(`${baseUrl}/unknown-page`);
     assert.equal(missingPage.status, 404);
 
@@ -186,6 +215,11 @@ async function waitForServer() {
     updatedState.projectPeriodReviews["week:2026-08-10"] = {
       工作: { wins: "工作项目周成果", blockers: "", next: "工作项目下周重点", completedAt: null },
     };
+    updatedState.periodReports["week:2026-08-10"] = { content: "本周汇报：完成登录体验优化。", updatedAt: null };
+    updatedState.periodReports["month:2026-08-01"] = { content: "月度汇报初稿", updatedAt: null };
+    updatedState.projectPeriodReports["week:2026-08-10"] = {
+      工作: { content: "工作项目周汇报", updatedAt: null },
+    };
 
     result = await jsonRequest("/api/state", {
       method: "PUT",
@@ -201,12 +235,17 @@ async function waitForServer() {
     assert.equal(result.body.data.periodReviews["year:2026-01-01"].wins, "年度成果");
     assert.equal(result.body.data.projectReviews["2026-08-12"].工作.wins, "工作项目成果");
     assert.equal(result.body.data.projectPeriodReviews["week:2026-08-10"].工作.wins, "工作项目周成果");
+    assert.equal(result.body.data.periodReports["week:2026-08-10"].content, "本周汇报：完成登录体验优化。");
+    assert.equal(result.body.data.periodReports["month:2026-08-01"].content, "月度汇报初稿");
+    assert.equal(result.body.data.projectPeriodReports["week:2026-08-10"].工作.content, "工作项目周汇报");
 
     const modernRevision = result.body.revision;
     const oldClientState = structuredClone(result.body.data);
     delete oldClientState.periodReviews;
     delete oldClientState.projectReviews;
     delete oldClientState.projectPeriodReviews;
+    delete oldClientState.periodReports;
+    delete oldClientState.projectPeriodReports;
     oldClientState.notes["2026-08-13"] = "旧客户端写入";
     result = await jsonRequest("/api/state", {
       method: "PUT",
@@ -224,6 +263,16 @@ async function waitForServer() {
       "工作项目周成果",
       "旧客户端不得覆盖项目周期复盘",
     );
+    assert.equal(
+      result.body.data.periodReports["week:2026-08-10"].content,
+      "本周汇报：完成登录体验优化。",
+      "旧客户端不得覆盖周期汇报",
+    );
+    assert.equal(
+      result.body.data.projectPeriodReports["week:2026-08-10"].工作.content,
+      "工作项目周汇报",
+      "旧客户端不得覆盖项目周期汇报",
+    );
 
     const invalidPeriodState = structuredClone(result.body.data);
     invalidPeriodState.periodReviews["quarter:2026-02-01"] = {
@@ -238,6 +287,15 @@ async function waitForServer() {
     });
     assert.equal(invalidPeriodResult.response.status, 400);
     assert.equal(invalidPeriodResult.body.error.code, "INVALID_STATE");
+
+    const invalidReportState = structuredClone(result.body.data);
+    invalidReportState.periodReports["week:2026-08-11"] = { content: "无效周期起始日的汇报", updatedAt: null };
+    const invalidReportResult = await jsonRequest("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ data: invalidReportState, revision: result.body.revision }),
+    });
+    assert.equal(invalidReportResult.response.status, 400);
+    assert.equal(invalidReportResult.body.error.code, "INVALID_STATE");
 
     const staleResult = await jsonRequest("/api/state", {
       method: "PUT",

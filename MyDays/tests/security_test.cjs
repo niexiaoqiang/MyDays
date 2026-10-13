@@ -73,6 +73,8 @@ async function expectStartupFailure(env, expectedText) {
     assert.equal(response.status, 401, "临时模型发现接口必须受登录保护");
     response = await fetch(`${baseUrl}/api/ai/period-summary`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: "{}" });
     assert.equal(response.status, 401, "周期 AI 总结接口必须受登录保护");
+    response = await fetch(`${baseUrl}/api/ai/polish-entry`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: "{}" });
+    assert.equal(response.status, 401, "AI 润色接口必须受登录保护");
     response = await fetch(`${baseUrl}/api/ai/summary-settings`, { method: "PUT", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: "{}" });
     assert.equal(response.status, 401, "AI 总结偏好接口必须受登录保护");
     response = await fetch(`${baseUrl}/api/projects`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ name: "未登录项目" }) });

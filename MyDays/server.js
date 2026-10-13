@@ -14,6 +14,9 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 const MAX_AI_SUMMARY_FIELD_LENGTH = 4000;
 const MAX_AI_SUMMARY_ITEMS = 120;
+const MAX_AI_REPORT_LENGTH = 8000;
+const MAX_REPORT_CONTENT_LENGTH = 20000;
+const MAX_CAPTURE_ENTRY_LENGTH = 120;
 const DEFAULT_AI_SUMMARY_PROMPT_EXCERPT = "请生成简洁、具体、忠于事实的中文工作复盘，突出可验证的成果、实际阻碍和可执行的下一步。优先使用易编辑的短段落或项目符号，不要虚构未提供的信息。";
 const AI_SECRET_PATH = path.join(DATA_DIR, ".ai-config-secret");
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
@@ -105,8 +108,8 @@ const STATIC_FILES = new Map([
   ["/ai-settings", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/login", { file: "login.html", type: "text/html; charset=utf-8", cache: "no-store" }],
   ["/login.js", { file: "login.js", type: "application/javascript; charset=utf-8", cache: "no-store" }],
-  ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8", cache: "public, max-age=604800" }],
-  ["/app.js", { file: "app.js", type: "application/javascript; charset=utf-8", cache: "public, max-age=604800" }],
+  ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8", cache: "no-cache" }],
+  ["/app.js", { file: "app.js", type: "application/javascript; charset=utf-8", cache: "no-cache" }],
 ]);
 
 class HttpError extends Error {
@@ -336,6 +339,35 @@ try {
   throw error;
 }
 
+
+database.exec("BEGIN IMMEDIATE");
+try {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS period_reports (
+      period_type TEXT NOT NULL CHECK (period_type IN ('week', 'month', 'quarter', 'year')),
+      period_start TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (period_type, period_start)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS project_period_reports (
+      period_type TEXT NOT NULL CHECK (period_type IN ('week', 'month', 'quarter', 'year')),
+      period_start TEXT NOT NULL,
+      project TEXT NOT NULL CHECK (length(trim(project)) BETWEEN 1 AND 80),
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (period_type, period_start, project)
+    ) STRICT;
+
+    UPDATE metadata SET value = '7' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 7;
+  `);
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
 const statements = {
   getRevision: database.prepare("SELECT value FROM metadata WHERE key = 'revision'"),
   setRevision: database.prepare("UPDATE metadata SET value = ? WHERE key = 'revision'"),
@@ -349,7 +381,9 @@ const statements = {
       (SELECT COUNT(*) FROM reviews) +
       (SELECT COUNT(*) FROM period_reviews) +
       (SELECT COUNT(*) FROM project_reviews) +
-      (SELECT COUNT(*) FROM project_period_reviews) AS count
+      (SELECT COUNT(*) FROM project_period_reviews) +
+      (SELECT COUNT(*) FROM period_reports) +
+      (SELECT COUNT(*) FROM project_period_reports) AS count
   `),
   readTasks: database.prepare(`
     SELECT id, work_date, title, project, priority, completed, created_at, completed_at
@@ -404,6 +438,23 @@ const statements = {
     INSERT INTO project_period_reviews(
       period_type, period_start, project, wins, blockers, next_actions, completed_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+
+  readPeriodReports: database.prepare(`
+    SELECT period_type, period_start, content, updated_at
+    FROM period_reports ORDER BY period_start ASC, period_type ASC
+  `),
+  readProjectPeriodReports: database.prepare(`
+    SELECT period_type, period_start, project, content, updated_at
+    FROM project_period_reports ORDER BY period_start ASC, period_type ASC, project ASC
+  `),
+  insertPeriodReport: database.prepare(`
+    INSERT INTO period_reports(period_type, period_start, content, updated_at)
+    VALUES (?, ?, ?, ?)
+  `),
+  insertProjectPeriodReport: database.prepare(`
+    INSERT INTO project_period_reports(period_type, period_start, project, content, updated_at)
+    VALUES (?, ?, ?, ?, ?)
   `),
   readAiProviders: database.prepare(`
     SELECT id, name, protocol, base_url, model, timeout_ms, options_json,
@@ -1198,6 +1249,34 @@ function parsePeriodSummaryText(text, forbiddenValues = []) {
   return summary;
 }
 
+function parsePeriodReportText(text, forbiddenValues = []) {
+  if (typeof text !== "string") throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务响应缺少汇报文本");
+  let normalized = text.trim();
+  const fenced = /^```(?:markdown|md|text)?\s*([\s\S]*?)\s*```$/i.exec(normalized);
+  if (fenced) normalized = fenced[1].trim();
+  if (!normalized) throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回了空汇报");
+  if (normalized.length > MAX_AI_REPORT_LENGTH) {
+    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的汇报内容过长");
+  }
+  for (const secret of forbiddenValues) {
+    if (secret && normalized.includes(secret)) {
+      throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的汇报包含敏感内容");
+    }
+  }
+  return normalized;
+}
+
+function periodReportPrompt(snapshot, promptExcerpt) {
+  return [
+    `用户的总结偏好：${promptExcerpt}`,
+    "请根据下面的工作周期数据，生成一份可直接提交的中文工作汇报。",
+    "要求：客观、真实、简洁明了；可以稍加修饰，但不要空话套话、不要夸张措辞、不要明显的 AI 腔。",
+    "结构建议：先用一两句话概述本周期情况（可包含完成事项数、活跃天数、项目分布等量化数据）；再分条列出主要成果（只能基于给定记录归纳，不得虚构）；然后写下一周期的计划；如有风险或需要的支持可单列。",
+    "不要虚构未提供的事实；不要使用‘赋能’‘抓手’‘很高兴’等套话；直接陈述做了什么、结果如何。",
+    `周期数据：${JSON.stringify(snapshot)}`,
+  ].join("\n");
+}
+
 function periodSummaryPrompt(snapshot, promptExcerpt) {
   return [
     `用户的总结偏好：${promptExcerpt}`,
@@ -1210,13 +1289,12 @@ function periodSummaryPrompt(snapshot, promptExcerpt) {
   ].join("\n");
 }
 
-async function generatePeriodAiSummary(input) {
-  const { periodType, periodStart, project } = requirePeriodSummaryInput(input);
+async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, minTokens, maxTokens }) {
   const provider = statements.readDefaultAiProvider.get();
   if (!provider) throw new HttpError(400, "AI_DEFAULT_PROVIDER_MISSING", "请先在 AI 设置中配置默认服务");
   if (!provider.model?.trim()) throw new HttpError(400, "AI_MODEL_MISSING", "默认 AI 服务还没有配置模型");
   const apiKey = decryptApiKey(provider);
-  const snapshot = buildPeriodSummarySnapshot(periodType, periodStart, project);
+  const resolvedUserPrompt = typeof userPrompt === "function" ? userPrompt() : userPrompt;
   const target = await validateAiTarget(provider.base_url);
   const options = JSON.parse(provider.options_json || "{}");
   const openai = provider.protocol === "openai";
@@ -1227,24 +1305,22 @@ async function generatePeriodAiSummary(input) {
         "x-api-key": apiKey,
         "anthropic-version": options.anthropicVersion || "2023-06-01",
       };
-  const userPrompt = periodSummaryPrompt(snapshot, readAiSummarySettings().promptExcerpt);
-  const systemPrompt = "你是一个严谨的工作复盘助手。必须严格遵守用户要求的 JSON 输出格式。";
-  const maxTokens = Math.max(512, Math.min(1024, options.maxTokens || 1024));
+  const requestMaxTokens = Math.max(minTokens, Math.min(maxTokens, options.maxTokens || maxTokens));
   const body = openai
     ? {
         model: provider.model,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          { role: "user", content: resolvedUserPrompt },
         ],
-        max_tokens: maxTokens,
+        max_tokens: requestMaxTokens,
         stream: false,
       }
     : {
         model: provider.model,
         system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        max_tokens: maxTokens,
+        messages: [{ role: "user", content: resolvedUserPrompt }],
+        max_tokens: requestMaxTokens,
         stream: false,
       };
   const startedAt = Date.now();
@@ -1271,7 +1347,7 @@ async function generatePeriodAiSummary(input) {
       throw new HttpError(response.status === 429 ? 429 : 502, code, message);
     }
     return {
-      summary: parsePeriodSummaryText(extractAiText(provider.protocol, response.result), [apiKey]),
+      ...parseResult(extractAiText(provider.protocol, response.result), apiKey),
       provider: provider.name,
       model: provider.model,
       latencyMs: Date.now() - startedAt,
@@ -1279,6 +1355,118 @@ async function generatePeriodAiSummary(input) {
   } catch (error) {
     throw mapAiUpstreamError(error);
   }
+}
+
+async function runPeriodAiTask({ periodType, periodStart, project, systemPrompt, makeUserPrompt, parseResult }) {
+  return runDefaultAiTextTask({
+    systemPrompt,
+    userPrompt: () => makeUserPrompt(
+      buildPeriodSummarySnapshot(periodType, periodStart, project),
+      readAiSummarySettings().promptExcerpt,
+    ),
+    parseResult,
+    minTokens: 512,
+    maxTokens: 1024,
+  });
+}
+
+async function generatePeriodAiSummary(input) {
+  const { periodType, periodStart, project } = requirePeriodSummaryInput(input);
+  return runPeriodAiTask({
+    periodType,
+    periodStart,
+    project,
+    systemPrompt: "你是一个严谨的工作复盘助手。必须严格遵守用户要求的 JSON 输出格式。",
+    makeUserPrompt: periodSummaryPrompt,
+    parseResult: (text, apiKey) => ({ summary: parsePeriodSummaryText(text, [apiKey]) }),
+  });
+}
+
+async function generatePeriodAiReport(input) {
+  const { periodType, periodStart, project } = requirePeriodSummaryInput(input);
+  return runPeriodAiTask({
+    periodType,
+    periodStart,
+    project,
+    systemPrompt: "你是一个严谨、务实的工作汇报助手。必须基于给定的周期数据客观陈述，不虚构、不夸大。",
+    makeUserPrompt: periodReportPrompt,
+    parseResult: (text, apiKey) => ({ report: parsePeriodReportText(text, [apiKey]) }),
+  });
+}
+
+function requirePolishEntryInput(input) {
+  if (!isPlainObject(input)) throw new HttpError(400, "AI_POLISH_INVALID", "润色参数必须是对象");
+  const type = typeof input.type === "string" ? input.type.trim() : "";
+  if (!Object.hasOwn({ task: true, log: true }, type)) {
+    throw new HttpError(400, "AI_POLISH_INVALID", "记录类型无效");
+  }
+  const text = typeof input.text === "string" ? input.text.trim() : "";
+  if (!text || text.length > MAX_CAPTURE_ENTRY_LENGTH || /[\r\n]/.test(text)) {
+    throw new HttpError(400, "AI_POLISH_INVALID", "请输入 1 到 120 字的单行记录");
+  }
+  return { type, text };
+}
+
+function extractPolishProtectedTokens(text) {
+  const tokens = new Set();
+  const patterns = [
+    /https?:\/\/[^\s<>"'，。！？；：]+/giu,
+    /\b[A-Za-z][A-Za-z0-9]*(?:[._:/#-][A-Za-z0-9]+)*\b/gu,
+    /\d+(?:[./:_-]\d+)*(?:年|月|日|号|点|时|分|秒|周|天|个|项|次|元|万|%|％|GB|MB)?/gu,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) tokens.add(match[0]);
+  }
+  return [...tokens];
+}
+
+function parsePolishedEntryText(text, sourceText, forbiddenValues = []) {
+  if (typeof text !== "string") throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务响应缺少润色文本");
+  const normalized = text.trim();
+  if (!normalized || normalized.length > MAX_CAPTURE_ENTRY_LENGTH || /[\r\n]/.test(normalized)) {
+    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的润色内容不是有效单行文本");
+  }
+  const quotePairs = [["\"", "\""], ["'", "'"], ["“", "”"], ["‘", "’"]];
+  const wrappedInQuotes = quotePairs.some(([open, close]) => normalized.startsWith(open) && normalized.endsWith(close));
+  if (wrappedInQuotes
+    || /^(?:#{1,6}\s|[-+*>]\s|```|\d+[.)]\s)/u.test(normalized)
+    || /(?:\*\*|__|~~|`[^`]+`|\[[^\]]+\]\([^)]+\))/u.test(normalized)) {
+    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回了不支持的格式");
+  }
+  if (forbiddenValues.some((secret) => secret && normalized.includes(secret))) {
+    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的润色内容包含敏感信息");
+  }
+  const missingToken = extractPolishProtectedTokens(sourceText).find((token) => !normalized.includes(token));
+  if (missingToken) {
+    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 润色未能完整保留原文中的关键信息");
+  }
+  return normalized;
+}
+
+function polishEntryPrompt(type, text) {
+  const typeLabel = type === "task" ? "待办事项（尚未完成）" : "工作记录（已经发生或完成）";
+  return [
+    `记录类型：${typeLabel}`,
+    `原文：${text}`,
+    "只返回润色后的单行纯文本，不要引号、标题、列表、Markdown 或解释。",
+  ].join("\n");
+}
+
+async function generateCapturePolish(input) {
+  const { type, text } = requirePolishEntryInput(input);
+  return runDefaultAiTextTask({
+    systemPrompt: [
+      "你是日常工作记录润色助手。原文是唯一事实来源。",
+      "只允许修正病句、调整语序、压缩无信息赘词；不得增加、删除或改变任何事实。",
+      "不得虚构数字、时间、状态、成果、原因或下一步，不得夸大，不得把待办写成已完成。",
+      "保留原文中的数字、日期、URL、版本、工单号和英文标识符。",
+      "使用简洁、准确、自然的中文，避免赋能、抓手、闭环、深度、全面等空泛汇报腔。",
+    ].join("\n"),
+    userPrompt: polishEntryPrompt(type, text),
+    parseResult: (resultText, apiKey) => ({ polished: parsePolishedEntryText(resultText, text, [apiKey]) }),
+    minTokens: 128,
+    maxTokens: 256,
+  });
 }
 
 function getRevision() {
@@ -1304,6 +1492,19 @@ function groupProjectReviewRows(rows, keyFromRow) {
       next: row.next_actions,
       completedAt: row.completed_at,
     });
+  }
+  return Object.fromEntries(
+    [...grouped].map(([key, projects]) => [key, Object.fromEntries(projects)]),
+  );
+}
+
+
+function groupProjectReportRows(rows, keyFromRow) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = keyFromRow(row);
+    if (!grouped.has(key)) grouped.set(key, new Map());
+    grouped.get(key).set(row.project, { content: row.content, updatedAt: row.updated_at });
   }
   return Object.fromEntries(
     [...grouped].map(([key, projects]) => [key, Object.fromEntries(projects)]),
@@ -1369,7 +1570,19 @@ function readState() {
     (row) => `${row.period_type}:${row.period_start}`,
   );
 
-  return { tasks, logs, notes, reviews, periodReviews, projectReviews, projectPeriodReviews };
+  const periodReports = Object.fromEntries(
+    statements.readPeriodReports.all().map((row) => [
+      `${row.period_type}:${row.period_start}`,
+      { content: row.content, updatedAt: row.updated_at },
+    ]),
+  );
+
+  const projectPeriodReports = groupProjectReportRows(
+    statements.readProjectPeriodReports.all(),
+    (row) => `${row.period_type}:${row.period_start}`,
+  );
+
+  return { tasks, logs, notes, reviews, periodReviews, projectReviews, projectPeriodReviews, periodReports, projectPeriodReports };
 }
 
 function stateResponse() {
@@ -1448,6 +1661,14 @@ function validateReviewValue(review, field, maxLength) {
   };
 }
 
+function validateReportValue(report, field) {
+  if (!isPlainObject(report)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  return {
+    content: requireString(report.content ?? "", `${field}.content`, MAX_REPORT_CONTENT_LENGTH, { allowEmpty: true }),
+    updatedAt: requireTimestamp(report.updatedAt, `${field}.updatedAt`, { nullable: true }),
+  };
+}
+
 function validateProjectReviewMap(input, field, { period = false, maxEntries = 100000 } = {}) {
   if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", `${field} 必须是有效对象`);
   const groups = [];
@@ -1473,10 +1694,33 @@ function validateProjectReviewMap(input, field, { period = false, maxEntries = 1
   return Object.fromEntries(groups);
 }
 
+function validateProjectReportMap(input, field, { maxEntries = 100000 } = {}) {
+  if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", `${field} 必须是有效对象`);
+  const groups = [];
+  let entryCount = 0;
+  for (const [key, projectValues] of Object.entries(input)) {
+    const match = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key);
+    if (!match) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 的键无效`);
+    validatePeriodStart(match[1], match[2], `${field}.${key} 起始日`);
+    if (!isPlainObject(projectValues)) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 必须是项目对象`);
+    const projects = [];
+    for (const [project, report] of Object.entries(projectValues)) {
+      requireString(project, `${field}.${key} 项目`, 80);
+      projects.push([project, validateReportValue(report, `${field}.${key}.${project}`)]);
+      entryCount += 1;
+      if (entryCount > maxEntries) throw new HttpError(400, "INVALID_STATE", `${field} 条目过多`);
+    }
+    groups.push([key, Object.fromEntries(projects)]);
+  }
+  return Object.fromEntries(groups);
+}
+
 function validateState(input, {
   periodReviewsFallback = {},
   projectReviewsFallback = {},
   projectPeriodReviewsFallback = {},
+  periodReportsFallback = {},
+  projectPeriodReportsFallback = {},
 } = {}) {
   if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", "data 必须是对象");
 
@@ -1564,7 +1808,34 @@ function validateState(input, {
     { period: true },
   );
 
-  return { tasks, logs, notes, reviews, periodReviews, projectReviews, projectPeriodReviews };
+  const periodReportsInput = input.periodReports === undefined ? periodReportsFallback : input.periodReports;
+  if (!isPlainObject(periodReportsInput) || Object.keys(periodReportsInput).length > 10000) {
+    throw new HttpError(400, "INVALID_STATE", "periodReports 必须是有效对象");
+  }
+  const periodReports = {};
+  for (const [key, report] of Object.entries(periodReportsInput)) {
+    const match = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key);
+    if (!match) throw new HttpError(400, "INVALID_STATE", `periodReports.${key} 的键无效`);
+    validatePeriodStart(match[1], match[2], `periodReports.${key} 起始日`);
+    periodReports[key] = validateReportValue(report, `periodReports.${key}`);
+  }
+
+  const projectPeriodReports = validateProjectReportMap(
+    input.projectPeriodReports === undefined ? projectPeriodReportsFallback : input.projectPeriodReports,
+    "projectPeriodReports",
+  );
+
+  return {
+    tasks,
+    logs,
+    notes,
+    reviews,
+    periodReviews,
+    projectReviews,
+    projectPeriodReviews,
+    periodReports,
+    projectPeriodReports,
+  };
 }
 
 function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {}) {
@@ -1585,6 +1856,8 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
       DELETE FROM period_reviews;
       DELETE FROM project_reviews;
       DELETE FROM project_period_reviews;
+      DELETE FROM period_reports;
+      DELETE FROM project_period_reports;
     `);
 
     for (const task of nextState.tasks) {
@@ -1647,6 +1920,16 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
           review.completedAt,
           updatedAt,
         );
+      }
+    }
+    for (const [key, report] of Object.entries(nextState.periodReports)) {
+      const [periodType, periodStart] = key.split(":");
+      statements.insertPeriodReport.run(periodType, periodStart, report.content, updatedAt);
+    }
+    for (const [key, projects] of Object.entries(nextState.projectPeriodReports)) {
+      const [periodType, periodStart] = key.split(":");
+      for (const [project, report] of Object.entries(projects)) {
+        statements.insertProjectPeriodReport.run(periodType, periodStart, project, report.content, updatedAt);
       }
     }
 
@@ -1936,6 +2219,8 @@ const server = createServer(async (request, response) => {
           periodReviewsFallback: currentState.periodReviews,
           projectReviewsFallback: currentState.projectReviews,
           projectPeriodReviewsFallback: currentState.projectPeriodReviews,
+          periodReportsFallback: currentState.periodReports,
+          projectPeriodReportsFallback: currentState.projectPeriodReports,
         });
         return sendJson(response, 200, replaceState(nextState, body.revision));
       }
@@ -2002,6 +2287,18 @@ const server = createServer(async (request, response) => {
       if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
       consumeRateLimit(aiOperations, `summary:${currentSession(request)?.id || sourceKey(request)}`, { limit: 10, windowMs: 60 * 1000 });
       return sendJson(response, 200, await generatePeriodAiSummary(await readJsonBody(request)));
+    }
+
+    if (url.pathname === "/api/ai/period-report") {
+      if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+      consumeRateLimit(aiOperations, `report:${currentSession(request)?.id || sourceKey(request)}`, { limit: 10, windowMs: 60 * 1000 });
+      return sendJson(response, 200, await generatePeriodAiReport(await readJsonBody(request)));
+    }
+
+    if (url.pathname === "/api/ai/polish-entry") {
+      if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+      consumeRateLimit(aiOperations, `polish:${currentSession(request)?.id || sourceKey(request)}`, { limit: 20, windowMs: 60 * 1000 });
+      return sendJson(response, 200, await generateCapturePolish(await readJsonBody(request)));
     }
 
     const aiProviderMatch = /^\/api\/ai\/providers\/([0-9a-f-]+)(?:\/(default|test|key|models))?$/.exec(url.pathname);

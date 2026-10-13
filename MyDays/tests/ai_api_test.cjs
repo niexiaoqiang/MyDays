@@ -13,6 +13,17 @@ const appUrl = `http://127.0.0.1:${appPort}`;
 const mockUrl = `http://127.0.0.1:${mockPort}`;
 const requests = [];
 
+function mockPolishText(body) {
+  const prompt = body?.messages?.map((message) => String(message.content)).join("\n") ?? "";
+  const source = /原文：([^\n]*)/u.exec(prompt)?.[1] ?? "";
+  if (source.includes("MULTILINE")) return "第一行 MULTILINE\n第二行";
+  if (source.includes("TOO-LONG")) return "TOO-LONG" + "长".repeat(121);
+  if (source.includes("MARKDOWN")) return `- ${source}`;
+  if (source.includes("QUOTED")) return `“${source}”`;
+  if (source.includes("TOKEN-MISSING")) return "登录页修复已完成";
+  return source.replace("尽快的", "尽快");
+}
+
 const mock = createServer((request, response) => {
   const chunks = [];
   request.on("data", (chunk) => chunks.push(chunk));
@@ -22,16 +33,28 @@ const mock = createServer((request, response) => {
     requests.push({ url: request.url, headers: request.headers, body });
     response.setHeader("Content-Type", "application/json");
     if (request.url === "/openai/v1/chat/completions") {
-      const isSummary = body?.messages?.some((message) => String(message.content).includes("周期数据："));
-      const content = isSummary
-        ? JSON.stringify({ wins: "完成了登录体验优化", blockers: "模型获取流程需要继续观察", next: "完善 AI 总结回归测试" })
-        : request.headers.authorization;
+      const isPolish = body?.messages?.some((message) => String(message.content).includes("原文："));
+      const isReport = !isPolish && body?.messages?.some((message) => String(message.content).includes("工作汇报"));
+      const isSummary = !isReport && body?.messages?.some((message) => String(message.content).includes("周期数据："));
+      const content = isPolish
+        ? mockPolishText(body)
+        : isReport
+        ? "## 本周工作汇报\n\n本周共完成 2 项待办，活跃 1 天。\n\n### 主要成果\n- 完成登录体验优化\n\n### 下一步\n- 完善 AI 汇报回归测试"
+        : isSummary
+          ? JSON.stringify({ wins: "完成了登录体验优化", blockers: "模型获取流程需要继续观察", next: "完善 AI 总结回归测试" })
+          : request.headers.authorization;
       response.end(JSON.stringify({ model: "mock-openai", choices: [{ message: { content } }] }));
     } else if (request.url === "/claude/messages") {
-      const isSummary = body?.messages?.some((message) => String(message.content).includes("周期数据："));
-      const text = isSummary
-        ? '```json\n{"wins":"Claude 整理的成果","blockers":"Claude 整理的反思","next":"Claude 整理的下一步"}\n```'
-        : request.headers["x-api-key"];
+      const isPolish = body?.messages?.some((message) => String(message.content).includes("原文："));
+      const isReport = !isPolish && body?.messages?.some((message) => String(message.content).includes("工作汇报"));
+      const isSummary = !isReport && body?.messages?.some((message) => String(message.content).includes("周期数据："));
+      const text = isPolish
+        ? mockPolishText(body)
+        : isReport
+        ? "## 本月工作汇报\n\n本月完成 1 项待办。\n\n### 主要成果\n- Claude 整理的汇报成果"
+        : isSummary
+          ? '```json\n{"wins":"Claude 整理的成果","blockers":"Claude 整理的反思","next":"Claude 整理的下一步"}\n```'
+          : request.headers["x-api-key"];
       response.end(JSON.stringify({ model: "mock-claude", content: [{ type: "text", text }] }));
     } else if (request.url === "/openai/v1/models") {
       response.end(JSON.stringify({ data: [{ id: "zeta-model" }, { id: "alpha-model" }, { id: "alpha-model" }, { id: "bad\nmodel" }] }));
@@ -46,7 +69,8 @@ const mock = createServer((request, response) => {
       response.setHeader("Location", "/openai/v1/models");
       response.end(JSON.stringify({ internal: "raw redirect body must not escape" }));
     } else if (request.url === "/invalid/v1/chat/completions") {
-      response.end(JSON.stringify({ choices: [{ message: { content: "not-json-upstream-secret" } }] }));
+      const isTextTask = body?.messages?.some((message) => String(message.content).includes("工作汇报") || String(message.content).includes("原文："));
+      response.end(JSON.stringify({ choices: [{ message: { content: isTextTask ? request.headers.authorization : "not-json-upstream-secret" } }] }));
     } else {
       response.statusCode = 404;
       response.end(JSON.stringify({ error: "not found" }));
@@ -87,6 +111,12 @@ async function waitForApp() {
     await waitForApp();
     let result = await request("/api/ai/providers");
     assert.deepEqual(result.body, { providers: [], configured: false, defaultProviderId: null });
+    result = await request("/api/ai/polish-entry", {
+      method: "POST",
+      body: JSON.stringify({ type: "task", text: "整理登录页问题" }),
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error.code, "AI_DEFAULT_PROVIDER_MISSING");
 
     const openaiKey = "sk-openai-plain-secret";
     result = await request("/api/ai/models", {
@@ -134,6 +164,42 @@ async function waitForApp() {
     });
     assert.equal(result.body.isCustom, true);
     assert.equal(result.body.promptExcerpt, "突出项目价值与下周风险。");
+
+    result = await request("/api/ai/polish-entry", {
+      method: "POST",
+      body: JSON.stringify({ type: "task", text: "8月20日前尽快的完成 MyDays v2.1 登录页修复" }),
+    });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.polished, "8月20日前尽快完成 MyDays v2.1 登录页修复");
+    assert.equal(result.body.provider, "Local OpenAI");
+    assert.equal(result.body.model, "test-openai");
+    const openaiPolishRequest = requests.find((entry) => entry.url === "/openai/v1/chat/completions"
+      && entry.body.messages.some((message) => String(message.content).includes("原文：8月20日")));
+    assert.equal(openaiPolishRequest.headers.authorization, `Bearer ${openaiKey}`);
+    assert.equal(openaiPolishRequest.body.messages.some((message) => String(message.content).includes("原文是唯一事实来源")), true);
+    assert.equal(JSON.stringify(openaiPolishRequest.body).includes("突出项目价值与下周风险。"), false, "总结偏好不得影响润色安全提示词");
+    assert.equal(JSON.stringify(openaiPolishRequest.body).includes("排查模型获取按钮"), false, "润色请求不得携带其他工作记录");
+
+    for (const body of [
+      { type: "note", text: "无效类型" },
+      { type: "task", text: "" },
+      { type: "log", text: "第一行\n第二行" },
+      { type: "task", text: "长".repeat(121) },
+    ]) {
+      result = await request("/api/ai/polish-entry", { method: "POST", body: JSON.stringify(body) });
+      assert.equal(result.response.status, 400);
+      assert.equal(result.body.error.code, "AI_POLISH_INVALID");
+    }
+
+    for (const text of ["完成 TOKEN-MISSING 登录页修复", "记录 MULTILINE", "记录 TOO-LONG", "记录 MARKDOWN", "记录 QUOTED"]) {
+      result = await request("/api/ai/polish-entry", {
+        method: "POST",
+        body: JSON.stringify({ type: "log", text }),
+      });
+      assert.equal(result.response.status, 502);
+      assert.equal(result.body.error.code, "AI_RESPONSE_INVALID");
+      assert.equal(JSON.stringify(result.body).includes(text), false, "非法上游润色正文不得透传");
+    }
 
     const stateResult = await request("/api/state");
     const summaryState = structuredClone(stateResult.body.data);
@@ -184,6 +250,44 @@ async function waitForApp() {
     assert.equal(openaiSummaryRequest.body.messages.some((message) => String(message.content).includes('"project":"MyDays"')), true);
     let persistedState = await request("/api/state");
     assert.deepEqual(persistedState.body.data.periodReviews, {}, "AI 生成结果不得自动保存到 SQLite");
+
+    result = await request("/api/ai/period-report", {
+      method: "POST",
+      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "MyDays" }),
+    });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.report.includes("本周工作汇报"), true, "OpenAI 应返回汇报文本");
+    assert.equal(result.body.report.includes("完成登录体验优化"), true, "汇报应基于周期记录归纳");
+    assert.equal(result.body.provider, "Local OpenAI");
+    assert.equal(result.body.model, "test-openai");
+    assert.equal(JSON.stringify(result.body).includes(openaiKey), false, "AI 汇报不得回传 OpenAI Key");
+    const openaiReportRequest = requests.find((entry) => entry.url === "/openai/v1/chat/completions"
+      && entry.body.messages.some((message) => String(message.content).includes("工作汇报")));
+    assert.equal(openaiReportRequest.headers.authorization, `Bearer ${openaiKey}`);
+    assert.equal(openaiReportRequest.body.model, "test-openai");
+    assert.equal(openaiReportRequest.body.stream, false);
+    assert.equal(JSON.stringify(openaiReportRequest.body).includes("完成登录体验优化"), true);
+    persistedState = await request("/api/state");
+    assert.deepEqual(persistedState.body.data.periodReports, {}, "AI 汇报生成结果不得自动保存到 SQLite");
+
+    result = await request("/api/ai/period-report", {
+      method: "POST",
+      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-11" }),
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error.code, "AI_SUMMARY_INVALID");
+    result = await request("/api/ai/period-report", {
+      method: "POST",
+      body: JSON.stringify({ periodType: "month", periodStart: "2025-01-01" }),
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error.code, "AI_SUMMARY_EMPTY");
+    result = await request("/api/ai/period-report", {
+      method: "POST",
+      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "不存在项目" }),
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error.code, "AI_SUMMARY_EMPTY");
 
     result = await request("/api/ai/period-summary", {
       method: "POST",
@@ -276,6 +380,33 @@ async function waitForApp() {
     assert.equal(claudeSummaryRequest.body.model, "test-claude");
     assert.equal(claudeSummaryRequest.body.stream, false);
 
+    result = await request("/api/ai/period-report", {
+      method: "POST",
+      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }),
+    });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.report.includes("本月工作汇报"), true, "Claude 应返回汇报文本");
+    assert.equal(result.body.provider, "Local Claude");
+    assert.equal(result.body.model, "test-claude");
+    assert.equal(JSON.stringify(result.body).includes(anthropicKey), false, "AI 汇报不得回传 Anthropic Key");
+    const claudeReportRequest = requests.find((entry) => entry.url === "/claude/messages"
+      && entry.body.messages.some((message) => String(message.content).includes("工作汇报")));
+    assert.equal(claudeReportRequest.headers["x-api-key"], anthropicKey);
+    assert.equal(claudeReportRequest.headers["anthropic-version"], "2023-06-01");
+
+    result = await request("/api/ai/polish-entry", {
+      method: "POST",
+      body: JSON.stringify({ type: "log", text: "完成 MyDays v2.1 登录页修复" }),
+    });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.polished, "完成 MyDays v2.1 登录页修复");
+    assert.equal(result.body.provider, "Local Claude");
+    assert.equal(result.body.model, "test-claude");
+    const claudePolishRequest = requests.find((entry) => entry.url === "/claude/messages"
+      && entry.body.messages.some((message) => String(message.content).includes("原文：完成 MyDays")));
+    assert.equal(claudePolishRequest.headers["x-api-key"], anthropicKey);
+    assert.equal(claudePolishRequest.body.system.includes("不得把待办写成已完成"), true);
+
     const invalidKey = "sk-invalid-summary-secret";
     result = await request("/api/ai/providers", {
       method: "POST",
@@ -298,7 +429,41 @@ async function waitForApp() {
     assert.equal(result.body.error.code, "AI_RESPONSE_INVALID");
     assert.equal(JSON.stringify(result.body).includes("not-json-upstream-secret"), false, "非法上游正文不得透传");
     assert.equal(JSON.stringify(result.body).includes(invalidKey), false, "非法响应不得泄露 Key");
+
+    result = await request("/api/ai/polish-entry", {
+      method: "POST",
+      body: JSON.stringify({ type: "task", text: "修复登录页" }),
+    });
+    assert.equal(result.response.status, 502);
+    assert.equal(result.body.error.code, "AI_RESPONSE_INVALID");
+    assert.equal(JSON.stringify(result.body).includes("Bearer"), false, "润色接口不得透传上游回显的 Authorization 头");
+    assert.equal(JSON.stringify(result.body).includes(invalidKey), false, "润色接口不得泄露 Key");
+
+    result = await request("/api/ai/period-report", {
+      method: "POST",
+      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }),
+    });
+    assert.equal(result.response.status, 502);
+    assert.equal(result.body.error.code, "AI_RESPONSE_INVALID");
+    assert.equal(JSON.stringify(result.body).includes("Bearer"), false, "上游回显的 Authorization 头不得透传");
+    assert.equal(JSON.stringify(result.body).includes(invalidKey), false, "非法响应不得泄露 Key");
+
     await request(`/api/ai/providers/${invalidId}`, { method: "DELETE" });
+    await request(`/api/ai/providers/${openaiId}/default`, { method: "POST" });
+    let polishRateLimited = false;
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      result = await request("/api/ai/polish-entry", {
+        method: "POST",
+        body: JSON.stringify({ type: "task", text: "完成 MyDays v2.1 登录页修复" }),
+      });
+      if (result.response.status === 429) {
+        polishRateLimited = true;
+        assert.equal(result.body.error.code, "RATE_LIMITED");
+        break;
+      }
+      assert.equal(result.response.status, 200);
+    }
+    assert.equal(polishRateLimited, true, "润色接口必须使用独立限流键稳定拒绝超限请求");
 
     result = await request(`/api/ai/providers/${openaiId}`, {
       method: "PUT",
@@ -388,7 +553,7 @@ async function waitForApp() {
     const stored = database.prepare("SELECT * FROM ai_providers WHERE id = ?").get(openaiId);
     assert.notEqual(stored.api_key_ciphertext, openaiKey);
     assert.equal(JSON.stringify(stored).includes(openaiKey), false);
-    assert.equal(database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "6");
+    assert.equal(database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "7");
     database.close();
     assert.equal(fs.existsSync(path.join(dataDir, ".ai-config-secret")), false, "环境变量密钥不得生成主密钥文件");
 

@@ -7,6 +7,27 @@ fs.mkdirSync(screenshotDir, { recursive: true });
 
 let browser;
 
+function readStoredZipEntries(buffer) {
+  const entries = new Map();
+  let offset = 0;
+  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
+    const compression = buffer.readUInt16LE(offset + 8);
+    if (compression !== 0) throw new Error("测试读取器只接受未压缩的 XLSX ZIP 条目");
+    const size = buffer.readUInt32LE(offset + 18);
+    const nameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const name = buffer.subarray(nameStart, nameStart + nameLength).toString("utf8");
+    entries.set(name, buffer.subarray(dataStart, dataStart + size));
+    offset = dataStart + size;
+  }
+  if (buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) < 0) {
+    throw new Error("Excel 导出缺少 ZIP 目录结束记录");
+  }
+  return entries;
+}
+
 (async () => {
   browser = await chromium.launch({
     headless: true,
@@ -27,7 +48,10 @@ let browser;
   }, { now: fixedNow });
   const consoleErrors = [];
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() === "error") {
+      const location = message.location().url;
+      consoleErrors.push(`${message.text()}${location ? ` · ${location}` : ""}`);
+    }
   });
 
   await page.goto(baseUrl);
@@ -110,6 +134,62 @@ let browser;
   }
   await page.locator(".task-title", { hasText: "从浏览器迁移的待办" }).waitFor();
 
+  const polishRequests = [];
+  let signalDelayedPolish;
+  let releaseDelayedPolish;
+  const delayedPolishStarted = new Promise((resolve) => { signalDelayedPolish = resolve; });
+  await page.route("**/api/ai/polish-entry", async (route) => {
+    const body = route.request().postDataJSON();
+    polishRequests.push(body);
+    if (body.text.includes("等待返回")) {
+      signalDelayedPolish();
+      await new Promise((resolve) => { releaseDelayedPolish = resolve; });
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        polished: body.text.replace("尽快的", "尽快"),
+        provider: "浏览器模拟服务",
+        model: "browser-polish-model",
+        latencyMs: 42,
+      }),
+    });
+  });
+
+  const captureInput = page.locator("#capture-input");
+  await captureInput.fill("等待返回的原文");
+  await page.getByRole("button", { name: "AI 润色" }).click();
+  await delayedPolishStarted;
+  await captureInput.fill("用户已经修改原文");
+  releaseDelayedPolish();
+  await page.waitForTimeout(80);
+  if ((await captureInput.inputValue()) !== "用户已经修改原文" || await page.locator("#capture-polish-suggestion").isVisible()) {
+    throw new Error("过期的 AI 润色结果覆盖了用户新输入");
+  }
+
+  await captureInput.fill("8月20日前尽快的完成 MyDays v2.1 登录页修复");
+  await page.getByRole("button", { name: "AI 润色" }).click();
+  await page.locator("#capture-polish-suggestion").waitFor();
+  if ((await captureInput.inputValue()) !== "8月20日前尽快的完成 MyDays v2.1 登录页修复") {
+    throw new Error("AI 润色预览提前覆盖了原文");
+  }
+  await page.getByRole("button", { name: "取消" }).click();
+  if ((await captureInput.inputValue()) !== "8月20日前尽快的完成 MyDays v2.1 登录页修复") {
+    throw new Error("取消 AI 润色后原文发生变化");
+  }
+  const taskCountBeforeAdopt = await page.evaluate(() => state.tasks.length);
+  await page.getByRole("button", { name: "AI 润色" }).click();
+  await page.locator("#capture-polish-suggestion").waitFor();
+  await page.getByRole("button", { name: "采用" }).click();
+  if ((await captureInput.inputValue()) !== "8月20日前尽快完成 MyDays v2.1 登录页修复") {
+    throw new Error("采用 AI 润色建议后没有替换输入文本");
+  }
+  if ((await page.evaluate(() => state.tasks.length)) !== taskCountBeforeAdopt) {
+    throw new Error("采用 AI 润色建议时自动添加了待办");
+  }
+  if (polishRequests.at(-1)?.type !== "task") throw new Error("待办润色请求类型不正确");
+
   await page.locator("#project-select-trigger").click();
   await page.getByRole("button", { name: "管理项目" }).click();
   await page.locator("#project-new-name").fill("自定义研发项目");
@@ -124,12 +204,61 @@ let browser;
   await page.getByRole("button", { name: "添加" }).click();
   await page.locator(".task-title", { hasText: "完成 MyDays 第一版" }).waitFor();
   if ((await page.locator("#task-count").innerText()) !== "1") throw new Error("待办计数不正确");
+  const createdTask = page.locator(".task-item", { hasText: "完成 MyDays 第一版" });
+  if ((await createdTask.locator(".item-action").count()) !== 2
+    || (await createdTask.locator(".edit-entry").getAttribute("class")) !== "item-action edit-entry"
+    || !(await createdTask.locator(".delete-task").getAttribute("class")).includes("item-action danger")) {
+    throw new Error("待办编辑和删除按钮没有使用统一样式");
+  }
+  const taskActionSizes = await createdTask.locator(".item-action").evaluateAll((buttons) => buttons.map((button) => {
+    const box = button.getBoundingClientRect();
+    return [box.width, box.height];
+  }));
+  if (taskActionSizes.some(([width, height]) => width !== taskActionSizes[0][0] || height !== taskActionSizes[0][1])) {
+    throw new Error("待办编辑和删除按钮尺寸不一致");
+  }
+  await createdTask.getByRole("button", { name: "编辑待办：完成 MyDays 第一版" }).click();
+  await page.locator(".entry-edit-title").fill("这次修改不应保存");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  if (!(await createdTask.locator(".task-title").innerText()).includes("完成 MyDays 第一版")) {
+    throw new Error("取消待办编辑后原内容发生变化");
+  }
+  await createdTask.getByRole("button", { name: "编辑待办：完成 MyDays 第一版" }).click();
+  await page.locator(".entry-edit-title").fill("尚未保存的编辑草稿");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.locator(".task-item", { hasText: "从浏览器迁移的待办" })
+    .getByRole("button", { name: "编辑待办：从浏览器迁移的待办" })
+    .click();
+  if ((await page.locator(".entry-edit-title").inputValue()) !== "尚未保存的编辑草稿") {
+    throw new Error("切换编辑目标时静默丢失了未保存内容");
+  }
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await createdTask.getByRole("button", { name: "编辑待办：完成 MyDays 第一版" }).click();
+  await page.locator(".entry-edit-title").fill("完成 MyDays 第一版验收");
+  await page.locator("[data-entry-edit-select][data-field='priority'] .capture-select-trigger").click();
+  await page.locator("[data-entry-edit-select][data-field='priority'] [data-value='low']").click();
+  await page.screenshot({ path: "/tmp/mydays-smoke/inline-edit-desktop.png", fullPage: true });
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await page.locator(".task-title", { hasText: "完成 MyDays 第一版验收" }).waitFor();
+  const editedTaskState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  const editedTask = editedTaskState.data.tasks.find((task) => task.title === "完成 MyDays 第一版验收");
+  if (!editedTask || editedTask.priority !== "low" || editedTask.project !== "自定义研发项目") {
+    throw new Error("待办原位置编辑没有保存标题、项目或优先级");
+  }
+  await page.getByPlaceholder("写下需要完成的事，按 Enter 保存…").fill("临时删除待办");
+  await page.getByRole("button", { name: "添加" }).click();
+  const disposableTask = page.locator(".task-item", { hasText: "临时删除待办" });
+  page.once("dialog", (dialog) => dialog.accept());
+  await disposableTask.getByRole("button", { name: "删除待办：临时删除待办" }).click();
+  if (await page.locator(".task-title", { hasText: "临时删除待办" }).count()) {
+    throw new Error("待办删除功能失效");
+  }
 
   await page.getByRole("link", { name: "工作台", exact: true }).click();
   if (new URL(page.url()).pathname !== "/" || (await page.locator("#overview-task-list .overview-item").count()) !== 1) {
     throw new Error("工作台未显示新增的待办摘要");
   }
-  if (!(await page.locator("#overview-task-list").innerText()).includes("完成 MyDays 第一版")) {
+  if (!(await page.locator("#overview-task-list").innerText()).includes("完成 MyDays 第一版验收")) {
     throw new Error("工作台待办摘要内容不正确");
   }
   await page.evaluate(() => {
@@ -147,7 +276,10 @@ let browser;
   const overviewTaskLink = page.locator(".overview-task-card [data-app-link]");
   const modifiedOverviewClickPrevented = await overviewTaskLink.evaluate((link) => {
     let prevented = null;
-    link.addEventListener("click", (event) => { prevented = event.defaultPrevented; }, { once: true });
+    link.addEventListener("click", (event) => {
+      prevented = event.defaultPrevented;
+      event.preventDefault();
+    }, { once: true });
     link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
     return prevented;
   });
@@ -157,7 +289,7 @@ let browser;
     throw new Error("工作台待办入口没有无刷新进入专属页面");
   }
 
-  await page.getByRole("button", { name: "完成待办：完成 MyDays 第一版" }).click();
+  await page.getByRole("button", { name: "完成待办：完成 MyDays 第一版验收" }).click();
   if ((await page.locator("#task-count").innerText()) !== "0") throw new Error("完成后的待办计数不正确");
   if ((await page.locator("#score-number").innerText()) !== "100%") throw new Error("完成度不正确");
 
@@ -166,12 +298,43 @@ let browser;
   if (!(await page.locator(".timeline-panel").isVisible()) || (await page.locator(".task-panel").isVisible())) {
     throw new Error("时间线页面内容隔离不正确");
   }
-  await page.locator(".timeline-content p", { hasText: "完成 MyDays 第一版" }).waitFor();
+  await page.locator(".timeline-content p", { hasText: "完成 MyDays 第一版验收" }).waitFor();
+  const autoLog = page.locator(".timeline-item.auto", { hasText: "完成 MyDays 第一版验收" });
+  await autoLog.getByRole("button", { name: "编辑工作记录：完成 MyDays 第一版验收" }).click();
+  if (!(await page.locator(".entry-edit-hint").innerText()).includes("来源")) {
+    throw new Error("自动完成记录编辑时没有说明来源待办");
+  }
+  await page.locator(".entry-edit-title").fill("完成 MyDays 第一版验收（已复核）");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await page.locator(".timeline-content p", { hasText: "完成 MyDays 第一版验收（已复核）" }).waitFor();
+  const autoEditState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  const sourceTask = autoEditState.data.tasks.find((task) => task.title === "完成 MyDays 第一版验收（已复核）");
+  const sourceLogs = autoEditState.data.logs.filter((log) => log.sourceTaskId === sourceTask?.id);
+  if (!sourceTask || sourceLogs.length !== 1 || sourceLogs[0].title !== sourceTask.title || sourceLogs[0].project !== sourceTask.project) {
+    throw new Error("自动完成记录没有通过来源待办同步更新");
+  }
   await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("检查移动端布局");
+  await page.getByRole("button", { name: "AI 润色" }).click();
+  await page.locator("#capture-polish-suggestion").waitFor();
+  if (polishRequests.at(-1)?.type !== "log") throw new Error("工作记录润色请求类型不正确");
+  await page.getByRole("button", { name: "取消" }).click();
   await page.getByRole("button", { name: "添加" }).click();
   await page.locator(".timeline-content p", { hasText: "检查移动端布局" }).waitFor();
+  const manualLog = page.locator(".timeline-item", { hasText: "检查移动端布局" });
+  await manualLog.getByRole("button", { name: "编辑工作记录：检查移动端布局" }).click();
+  await page.locator(".entry-edit-title").fill("检查移动端布局与交互");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await page.locator(".timeline-content p", { hasText: "检查移动端布局与交互" }).waitFor();
+  await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("临时删除记录");
+  await page.getByRole("button", { name: "添加" }).click();
+  const disposableLog = page.locator(".timeline-item", { hasText: "临时删除记录" });
+  page.once("dialog", (dialog) => dialog.accept());
+  await disposableLog.getByRole("button", { name: "删除工作记录：临时删除记录" }).click();
+  if (await page.locator(".timeline-content p", { hasText: "临时删除记录" }).count()) {
+    throw new Error("工作记录删除功能失效");
+  }
   const autoReviewAfterLog = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (!autoReviewAfterLog.data.reviews["2026-08-12"]?.wins.includes("检查移动端布局")) {
+  if (!autoReviewAfterLog.data.reviews["2026-08-12"]?.wins.includes("检查移动端布局与交互")) {
     throw new Error("新增工作记录后今日复盘没有自动同步");
   }
   await page.getByRole("link", { name: "今日复盘" }).click();
@@ -191,7 +354,7 @@ let browser;
   await customProjectRow.getByRole("button", { name: "上移项目：自定义研发项目" }).click();
   const renamedInput = page.locator(".project-option-row[data-name='自定义研发项目'] input");
   await renamedInput.fill("研发项目（新）");
-  await page.locator("#project-dialog-title").click();
+  await page.keyboard.press("Enter");
   await page.locator(".project-option-row[data-name='研发项目（新）']").waitFor();
   await page.locator("#project-dialog-done").click();
   await page.reload();
@@ -232,8 +395,8 @@ let browser;
   await page.getByRole("button", { name: "自动整理今日记录" }).click();
   const reviewWins = await page.locator("#review-wins").inputValue();
   if (!reviewWins.includes("从浏览器迁移的待办")
-    || !reviewWins.includes("完成 MyDays 第一版")
-    || !reviewWins.includes("检查移动端布局")
+    || !reviewWins.includes("完成 MyDays 第一版验收（已复核）")
+    || !reviewWins.includes("检查移动端布局与交互")
     || !reviewWins.includes("手工复盘后的工作记录")) {
     throw new Error("复盘自动整理结果不完整");
   }
@@ -272,52 +435,172 @@ let browser;
   await page.locator("#summary-project-trigger").click();
   await page.locator("#summary-project-menu [data-value='自定义研发项目']").click();
   if ((await page.locator("#summary-completed").innerText()) !== "1" || (await page.locator("#summary-logs").innerText()) !== "3") throw new Error("周期汇总项目筛选不正确");
-  let aiSummaryRequest = null;
-  await page.route("**/api/ai/period-summary", async (route) => {
-    aiSummaryRequest = route.request().postDataJSON();
+  const baseAchievementCount = await page.evaluate(() => getAchievements(getSummaryContext()).length);
+  await page.evaluate(() => {
+    const now = new Date().toISOString();
+    for (let index = 1; index <= 11; index += 1) {
+      state.logs.push({
+        id: `export-page-${index}`,
+        date: selectedDate,
+        title: index === 11 ? "分页成果 11 & <测试>" : `分页成果 ${String(index).padStart(2, "0")}`,
+        project: "自定义研发项目",
+        createdAt: now,
+      });
+    }
+    renderSummary();
+  });
+  const exportAchievementCount = baseAchievementCount + 11;
+  if ((await page.locator("#summary-achievements-count").innerText()) !== `共 ${exportAchievementCount} 项`
+    || (await page.locator("#summary-achievements .summary-list-item").count()) !== 10) {
+    throw new Error("主要成果跨页测试数据没有正确分页");
+  }
+
+  const exportTrigger = page.locator("#summary-export-trigger");
+  const exportMenu = page.locator("#summary-export-menu");
+  if (await exportMenu.isVisible() || (await exportTrigger.getAttribute("aria-expanded")) !== "false") {
+    throw new Error("主要成果导出菜单初始状态不正确");
+  }
+  await exportTrigger.click();
+  await page.waitForTimeout(20);
+  if (!(await exportMenu.isVisible())
+    || (await exportTrigger.getAttribute("aria-expanded")) !== "true"
+    || !(await page.locator("[data-export-format='markdown']").evaluate((item) => item === document.activeElement))) {
+    throw new Error("主要成果导出菜单没有展开或聚焦首个格式");
+  }
+  await page.keyboard.press("Escape");
+  if (await exportMenu.isVisible()
+    || (await exportTrigger.getAttribute("aria-expanded")) !== "false"
+    || !(await exportTrigger.evaluate((trigger) => trigger === document.activeElement))) {
+    throw new Error("Escape 没有关闭导出菜单并恢复焦点");
+  }
+  await exportTrigger.press("ArrowUp");
+  await page.waitForTimeout(20);
+  if (!(await page.locator("[data-export-format='excel']").evaluate((item) => item === document.activeElement))) {
+    throw new Error("导出菜单键盘打开时没有按方向聚焦格式");
+  }
+  await page.locator("#summary-period-label").click();
+  if (await exportMenu.isVisible() || (await exportTrigger.getAttribute("aria-expanded")) !== "false") {
+    throw new Error("点击导出菜单外部没有关闭菜单");
+  }
+
+  await exportTrigger.click();
+  const markdownDownloadPromise = page.waitForEvent("download");
+  await page.locator("[data-export-format='markdown']").click();
+  const markdownDownload = await markdownDownloadPromise;
+  if (await exportMenu.isVisible() || !(await exportTrigger.evaluate((trigger) => trigger === document.activeElement))) {
+    throw new Error("选择 Markdown 后没有关闭菜单并恢复焦点");
+  }
+  const markdown = fs.readFileSync(await markdownDownload.path(), "utf8");
+  if (!markdownDownload.suggestedFilename().endsWith(".md")
+    || !markdownDownload.suggestedFilename().includes("week-2026-08-10")
+    || !markdown.includes("# MyDays · 2026年第33周主要成果")
+    || !markdown.includes("项目范围：自定义研发项目")
+    || !markdown.includes("分页成果 11")
+    || !markdown.includes("测试")
+    || markdown.includes("从浏览器迁移的待办")) {
+    throw new Error("Markdown 导出没有使用当前周期、项目或完整分页成果");
+  }
+  if (markdown.split("完成 MyDays 第一版验收（已复核）").length - 1 !== 1
+    || !markdown.includes("完成待办")
+    || !markdown.includes("工作记录")) {
+    throw new Error("Markdown 导出类型错误或重复导出了自动完成记录");
+  }
+
+  await exportTrigger.click();
+  const excelDownloadPromise = page.waitForEvent("download");
+  await page.locator("[data-export-format='excel']").click();
+  const excelDownload = await excelDownloadPromise;
+  const workbookPath = `${screenshotDir}/summary-achievements.xlsx`;
+  await excelDownload.saveAs(workbookPath);
+  const workbook = fs.readFileSync(workbookPath);
+  const workbookEntries = readStoredZipEntries(workbook);
+  const requiredEntries = [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/styles.xml",
+  ];
+  if (!excelDownload.suggestedFilename().endsWith(".xlsx")
+    || requiredEntries.some((name) => !workbookEntries.has(name))) {
+    throw new Error("Excel 导出不是完整的标准 XLSX 容器");
+  }
+  const workbookXml = workbookEntries.get("xl/workbook.xml").toString("utf8");
+  const sheetXml = workbookEntries.get("xl/worksheets/sheet1.xml").toString("utf8");
+  if (!workbookXml.includes('sheet name="主要成果"')
+    || !sheetXml.includes("日期")
+    || !sheetXml.includes("项目")
+    || !sheetXml.includes("类型")
+    || !sheetXml.includes("主要成果")
+    || !sheetXml.includes("分页成果 11 &amp; &lt;测试&gt;")
+    || !sheetXml.includes("完成待办")
+    || !sheetXml.includes("工作记录")
+    || (sheetXml.match(/<row /g) ?? []).length !== exportAchievementCount + 1) {
+    throw new Error("Excel 工作表表头、文本转义或跨页成果不完整");
+  }
+
+  await page.evaluate(() => {
+    state.logs = state.logs.filter((log) => !log.id.startsWith("export-page-"));
+    summaryAnchor = new Date(1999, 0, 4);
+    renderSummary();
+  });
+  let emptyExportDownloaded = false;
+  const onEmptyDownload = () => { emptyExportDownloaded = true; };
+  page.on("download", onEmptyDownload);
+  await exportTrigger.click();
+  await page.locator("[data-export-format='markdown']").click();
+  await page.waitForTimeout(80);
+  page.off("download", onEmptyDownload);
+  if (emptyExportDownloaded || !(await page.locator("#toast").innerText()).includes("没有可导出的主要成果")) {
+    throw new Error("空成果范围仍生成了文件或没有给出提示");
+  }
+  await page.locator("#summary-current").click();
+  let aiReportRequest = null;
+  await page.route("**/api/ai/period-report", async (route) => {
+    aiReportRequest = route.request().postDataJSON();
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        summary: {
-          wins: "AI 整理的周期成果",
-          blockers: "AI 整理的问题与反思",
-          next: "AI 整理的下一周期重点",
-        },
+        report: "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。",
         provider: "浏览器模拟服务",
-        model: "browser-summary-model",
+        model: "browser-report-model",
         latencyMs: 42,
       }),
     });
   });
-  await page.getByRole("button", { name: "AI 总结" }).click();
-  await page.waitForFunction(() => document.querySelector("#summary-wins")?.value === "AI 整理的周期成果");
-  if (JSON.stringify(aiSummaryRequest) !== JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "自定义研发项目" })) {
+  await page.locator("#generate-ai-summary").click();
+  await page.waitForFunction(() => document.querySelector("#summary-ai-report")?.value?.includes("本周完成登录体验"));
+  if (JSON.stringify(aiReportRequest) !== JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "自定义研发项目" })) {
     throw new Error("周期 AI 总结请求没有使用当前规范周期");
   }
-  if ((await page.locator("#summary-blockers").inputValue()) !== "AI 整理的问题与反思"
-    || (await page.locator("#summary-next-actions").inputValue()) !== "AI 整理的下一周期重点") {
-    throw new Error("AI 总结没有完整填入三个复盘字段");
+  await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("生成并已保存"));
+  const stateAfterAiReport = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  if (stateAfterAiReport.data.projectPeriodReports["week:2026-08-10"]?.["自定义研发项目"]?.content
+    !== "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。") {
+    throw new Error("AI 总结生成后没有立即保存到项目周期 SQLite 数据");
   }
-  const stateAfterAiSummary = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (stateAfterAiSummary.data.periodReviews["week:2026-08-10"]
-    || stateAfterAiSummary.data.projectPeriodReviews["week:2026-08-10"]?.["自定义研发项目"]) {
-    throw new Error("AI 总结结果在用户保存前被自动写入 SQLite");
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  await page.locator("#summary-project-trigger").click();
+  await page.locator("#summary-project-menu [data-value='自定义研发项目']").click();
+  if ((await page.locator("#summary-ai-report").inputValue()) !== "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。") {
+    throw new Error("AI 总结刷新后没有从 SQLite 恢复");
   }
+  await page.locator("#summary-blockers").fill("自定义研发项目问题");
   await page.getByRole("button", { name: "完成周度复盘" }).click();
   await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("已于"));
   const savedProjectPeriodReview = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (savedProjectPeriodReview.data.projectPeriodReviews["week:2026-08-10"]?.["自定义研发项目"]?.wins !== "AI 整理的周期成果") {
+  if (savedProjectPeriodReview.data.projectPeriodReviews["week:2026-08-10"]?.["自定义研发项目"]?.blockers !== "自定义研发项目问题") {
     throw new Error("项目周期复盘没有独立保存");
   }
-  await page.evaluate(() => {
-    document.querySelector("#summary-wins").value = "";
-    document.querySelector("#summary-blockers").value = "";
-    document.querySelector("#summary-next-actions").value = "";
-  });
   await page.locator("#summary-project-trigger").click();
   await page.locator("#summary-project-menu [data-value='']").click();
-  if ((await page.locator("#summary-wins").inputValue()) !== "") throw new Error("项目周期复盘内容泄漏到全部项目复盘");
+  if ((await page.locator("#summary-ai-report").inputValue()) !== ""
+    || (await page.locator("#summary-blockers").inputValue()) === "自定义研发项目问题") {
+    throw new Error("项目周期 AI 总结或复盘内容泄漏到全部项目范围");
+  }
   await page.getByRole("button", { name: "每月" }).click();
   if (!(await page.locator("#summary-period-label").innerText()).includes("8月")) throw new Error("月度周期切换失败");
   await page.getByRole("button", { name: "每季度" }).click();
@@ -361,9 +644,8 @@ let browser;
   const crossMonthRange = await page.locator("#summary-period-range").innerText();
   if (!crossMonthRange.includes("8/31") || !crossMonthRange.includes("9/6")) throw new Error("跨月周边界不正确");
   await page.getByRole("button", { name: "回到本周期" }).click();
-  await page.getByRole("button", { name: "快速初稿" }).click();
-  if (!(await page.locator("#summary-wins").inputValue()).includes("完成 MyDays 第一版")) {
-    throw new Error("周期复盘自动初稿不完整");
+  if (!(await page.locator("#summary-wins").inputValue()).includes("完成 MyDays 第一版验收（已复核）")) {
+    throw new Error("周期复盘自动生成的主要成果不完整");
   }
   await page.locator("#summary-blockers").fill("继续检查数据边界。");
   await page.getByRole("button", { name: "完成周度复盘" }).click();
@@ -384,7 +666,7 @@ let browser;
     throw new Error("周期复盘刷新后没有从 SQLite 恢复");
   }
   await page.getByRole("link", { name: "待办事项" }).click();
-  await page.locator(".task-title", { hasText: "完成 MyDays 第一版" }).waitFor();
+  await page.locator(".task-title", { hasText: "完成 MyDays 第一版验收（已复核）" }).waitFor();
   await page.getByRole("link", { name: "工作时间线" }).click();
   await page.getByRole("link", { name: "今日复盘" }).click();
   await page.goBack();
@@ -401,7 +683,7 @@ let browser;
     throw new Error("刷新后 SQLite 笔记没有保留");
   }
   const serverState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (!serverState.data.tasks.some((task) => task.title === "完成 MyDays 第一版")) {
+  if (!serverState.data.tasks.some((task) => task.title === "完成 MyDays 第一版验收（已复核）")) {
     throw new Error("服务器 SQLite 中没有新增待办");
   }
   if (serverState.data.notes["2026-08-12"] !== "第一版交互已经可以使用。") {
@@ -427,7 +709,10 @@ let browser;
   const settingsStructure = await page.evaluate(() => {
     const link = document.querySelector("#ai-settings-link");
     let modifiedClickPrevented = null;
-    link.addEventListener("click", (event) => { modifiedClickPrevented = event.defaultPrevented; }, { once: true });
+    link.addEventListener("click", (event) => {
+      modifiedClickPrevented = event.defaultPrevented;
+      event.preventDefault();
+    }, { once: true });
     link.dispatchEvent(new MouseEvent("click", {
       bubbles: true,
       cancelable: true,
@@ -500,6 +785,44 @@ let browser;
   if (!mobileMainBox || mobileMainBox.x !== 0 || mobileMainBox.width < 389) {
     throw new Error("移动端主内容仍受桌面侧栏偏移影响");
   }
+  const mobileEditedTask = mobile.locator(".task-item", { hasText: "完成 MyDays 第一版验收（已复核）" });
+  if (!(await mobileEditedTask.locator(".edit-entry").isVisible()) || !(await mobileEditedTask.locator(".delete-task").isVisible())) {
+    throw new Error("移动端待办编辑或删除入口不可见");
+  }
+  await mobileEditedTask.getByRole("button", { name: "编辑待办：完成 MyDays 第一版验收（已复核）" }).click();
+  const mobileEditFormBox = await mobile.locator(".entry-edit-form").boundingBox();
+  if (!mobileEditFormBox || mobileEditFormBox.x < 0 || mobileEditFormBox.x + mobileEditFormBox.width > 390) {
+    throw new Error("移动端原位置编辑表单超出 390px 视口");
+  }
+  await mobile.locator("[data-entry-edit-select][data-field='project'] .capture-select-trigger").click();
+  const mobileEditMenuBox = await mobile.locator("[data-entry-edit-select][data-field='project'] .capture-select-menu").boundingBox();
+  if (!mobileEditMenuBox || mobileEditMenuBox.x < 0 || mobileEditMenuBox.x + mobileEditMenuBox.width > 390) {
+    throw new Error("移动端编辑项目下拉超出 390px 视口");
+  }
+  await mobile.screenshot({ path: "/tmp/mydays-smoke/inline-edit-mobile.png", fullPage: true });
+  await mobile.keyboard.press("Escape");
+  await mobile.getByRole("button", { name: "取消", exact: true }).click();
+  await mobile.route("**/api/ai/polish-entry", async (route) => {
+    const body = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        polished: body.text.replace("尽快的", "尽快"),
+        provider: "移动端模拟服务",
+        model: "mobile-polish-model",
+        latencyMs: 28,
+      }),
+    });
+  });
+  await mobile.locator("#capture-input").fill("8月20日前尽快的完成 MyDays v2.1 登录页修复");
+  await mobile.getByRole("button", { name: "AI 润色" }).click();
+  await mobile.locator("#capture-polish-suggestion").waitFor();
+  const mobilePolishBox = await mobile.locator("#capture-polish-suggestion").boundingBox();
+  if (!mobilePolishBox || mobilePolishBox.x < 0 || mobilePolishBox.x + mobilePolishBox.width > 390) {
+    throw new Error("移动端 AI 润色建议区超出 390px 视口");
+  }
+  await mobile.getByRole("button", { name: "取消" }).click();
   await mobile.locator("#project-select-trigger").click();
   await mobile.getByRole("button", { name: "管理项目" }).click();
   const mobileDialogBox = await mobile.locator(".project-dialog-card").boundingBox();
@@ -528,7 +851,20 @@ let browser;
   if (!summaryPageBox || summaryPageBox.x < 0 || summaryPageBox.x + summaryPageBox.width > 390) {
     throw new Error("移动端周期汇总超出 390px 视口");
   }
-  if (!(await mobile.getByRole("button", { name: "AI 总结" }).isVisible())) throw new Error("移动端 AI 总结入口不可见");
+  if (!(await mobile.locator("#generate-ai-summary").isVisible())) throw new Error("移动端 AI 总结入口不可见");
+  const mobileExportActionsBox = await mobile.locator(".summary-achievement-actions").boundingBox();
+  if (!mobileExportActionsBox
+    || mobileExportActionsBox.x < 0
+    || mobileExportActionsBox.x + mobileExportActionsBox.width > 390
+    || !(await mobile.locator("#summary-export-trigger").isVisible())) {
+    throw new Error("移动端主要成果导出操作超出 390px 视口或不可见");
+  }
+  await mobile.locator("#summary-export-trigger").click();
+  const mobileExportMenuBox = await mobile.locator("#summary-export-menu").boundingBox();
+  if (!mobileExportMenuBox || mobileExportMenuBox.x < 0 || mobileExportMenuBox.x + mobileExportMenuBox.width > 390) {
+    throw new Error("移动端主要成果导出菜单超出 390px 视口");
+  }
+  await mobile.keyboard.press("Escape");
   const mobileScopeBox = await mobile.locator(".summary-scope-bar").boundingBox();
   if (!mobileScopeBox || mobileScopeBox.x < 0 || mobileScopeBox.x + mobileScopeBox.width > 390) {
     throw new Error("移动端项目汇总范围控件超出 390px 视口");
