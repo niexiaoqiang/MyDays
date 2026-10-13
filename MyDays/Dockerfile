@@ -8,7 +8,7 @@ ENV NODE_ENV=production \
 
 RUN mkdir -p /app/data && chown node:node /app/data
 
-COPY --chown=node:node package.json server.js index.html login.html login.js styles.css app.js ./
+COPY --chown=node:node package.json server.js index.html login.html login.js theme.js styles.css app.js ./
 
 USER node
 

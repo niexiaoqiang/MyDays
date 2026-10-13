@@ -87,6 +87,7 @@ async function expectStartupFailure(env, expectedText) {
     assert.equal((await fetch(`${baseUrl}/app.js`, { redirect: "manual" })).status, 302);
     assert.equal((await fetch(`${baseUrl}/api/not-a-real-route`)).status, 401);
     assert.equal((await fetch(`${baseUrl}/login`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/theme.js`)).status, 200, "登录页依赖的主题脚本必须允许匿名访问");
     assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/status`)).json(), { enabled: true, authenticated: false });
     response = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://evil.example" }, body: JSON.stringify({ password: "correct horse battery staple" }) });
     assert.equal(response.status, 403);

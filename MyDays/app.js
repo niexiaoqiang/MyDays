@@ -113,6 +113,7 @@ const elements = {
   accountMenuButton: document.querySelector("#account-menu-button"),
   accountMenu: document.querySelector("#account-menu"),
   logoutButton: document.querySelector("#logout-button"),
+  themeOptions: [...document.querySelectorAll("[data-theme-option]")],
   footerDate: document.querySelector("#footer-date"),
   toast: document.querySelector("#toast"),
   emptyTaskTemplate: document.querySelector("#empty-task-template"),
@@ -240,6 +241,13 @@ function setAccountMenu(open, { restoreFocus = false } = {}) {
   elements.accountMenuButton.setAttribute("aria-expanded", String(open));
   if (open) elements.settingsLink.focus();
   else if (restoreFocus) elements.accountMenuButton.focus();
+}
+
+function renderThemeSwitch() {
+  const theme = window.MyDaysTheme?.get() ?? "system";
+  elements.themeOptions.forEach((option) => {
+    option.setAttribute("aria-pressed", String(option.dataset.themeOption === theme));
+  });
 }
 
 function closeSummaryExportMenu({ restoreFocus = false } = {}) {
@@ -2909,6 +2917,11 @@ document.addEventListener("visibilitychange", () => {
 });
 elements.exportButton.addEventListener("click", exportData);
 elements.accountMenuButton.addEventListener("click", () => setAccountMenu(elements.accountMenu.hidden));
+elements.themeOptions.forEach((option) => option.addEventListener("click", () => {
+  window.MyDaysTheme?.set(option.dataset.themeOption);
+  renderThemeSwitch();
+}));
+window.addEventListener("mydays-theme-change", renderThemeSwitch);
 elements.logoutButton.addEventListener("click", async () => {
   try {
     await requestJson("/api/auth/logout", { method: "POST" });
@@ -3141,4 +3154,5 @@ document.addEventListener("keydown", (event) => {
 });
 
 renderRoute();
+renderThemeSwitch();
 bootstrap();

@@ -111,6 +111,7 @@ const STATIC_FILES = new Map([
   ["/summary", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/ai-settings", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/login", { file: "login.html", type: "text/html; charset=utf-8", cache: "no-store" }],
+  ["/theme.js", { file: "theme.js", type: "application/javascript; charset=utf-8", cache: "no-cache" }],
   ["/login.js", { file: "login.js", type: "application/javascript; charset=utf-8", cache: "no-store" }],
   ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8", cache: "no-cache" }],
   ["/app.js", { file: "app.js", type: "application/javascript; charset=utf-8", cache: "no-cache" }],
@@ -2445,7 +2446,7 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { authenticated: false }, request);
     }
 
-    const anonymousPath = url.pathname === "/login" || url.pathname === "/login.js" || url.pathname === "/styles.css";
+    const anonymousPath = url.pathname === "/login" || url.pathname === "/login.js" || url.pathname === "/theme.js" || url.pathname === "/styles.css";
     if (ACCESS_PASSWORD_HASH && !anonymousPath && !currentSession(request)) {
       if (url.pathname.startsWith("/api/")) throw new HttpError(401, "AUTH_REQUIRED", "请先登录 MyDays");
       response.writeHead(302, commonHeaders({ Location: "/login", "Cache-Control": "no-store" }, { secure: requestIsSecure(request) }));
