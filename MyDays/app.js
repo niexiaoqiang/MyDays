@@ -3140,4 +3140,5 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+renderRoute();
 bootstrap();
