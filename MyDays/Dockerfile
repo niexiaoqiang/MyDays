@@ -6,9 +6,10 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/app/data
 
-RUN mkdir -p /app/data && chown node:node /app/data
+RUN mkdir -p /app/data /state && chown node:node /app/data /state
 
 COPY --chown=node:node package.json server.js index.html login.html login.js theme.js styles.css app.js ./
+COPY --chown=node:node collector ./collector
 
 USER node
 
