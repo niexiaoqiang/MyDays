@@ -337,6 +337,27 @@ async function waitForServer() {
     assert.equal(remigrationResult.body.migrated, false);
     assert.deepEqual(remigrationResult.body.data, emptyState, "删空后不得重复导入旧浏览器数据");
 
+    let sourceState = (await jsonRequest("/api/state")).body;
+    const sourcedLog = { id: "sourced-log", date: "2026-08-12", title: "AI 整理的记录", project: "", sourceTaskId: null, source: "agent-digest", createdAt: "2026-08-12T09:00:00.000Z" };
+    result = await jsonRequest("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ data: { ...sourceState.data, logs: [sourcedLog] }, revision: sourceState.revision }),
+    });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.data.logs[0].source, "agent-digest");
+    const { source: _omitted, ...legacyLog } = sourcedLog;
+    result = await jsonRequest("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ data: { ...result.body.data, logs: [legacyLog] }, revision: result.body.revision }),
+    });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.data.logs[0].source, "agent-digest", "旧客户端整包保存不得清除记录来源");
+    result = await jsonRequest("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ data: { ...result.body.data, logs: [{ ...legacyLog, source: "" }] }, revision: result.body.revision }),
+    });
+    assert.equal(result.body.data.logs[0].source, "", "显式清空来源即认领");
+
     console.log("MyDays API test passed");
   } finally {
     child.kill("SIGTERM");

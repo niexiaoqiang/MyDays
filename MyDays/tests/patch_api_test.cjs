@@ -211,6 +211,23 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
     assert.equal(result.response.status, 200, "数据超过 2 MiB 后增量保存仍必须成功");
     assert.equal(result.body.revision, 5);
 
+    let rev = result.body.revision;
+    result = await patch(rev, [{ op: "log.put", log: log("l-digest", { source: "agent-digest" }) }]);
+    assert.equal(result.response.status, 200);
+    rev = result.body.revision;
+    result = await patch(rev, [{ op: "log.put", log: log("l-digest", { title: "旧客户端改了标题" }) }]);
+    rev = result.body.revision;
+    const database2 = new DatabaseSync(path.join(tempDir, "mydays.db"), { readOnly: true });
+    const sourceOf = (id) => database2.prepare("SELECT source, title FROM logs WHERE id = ?").get(id);
+    assert.deepEqual({ ...sourceOf("l-digest") }, { source: "agent-digest", title: "旧客户端改了标题" }, "未带 source 的增量写入不得清除来源");
+    result = await patch(rev, [{ op: "log.put", log: log("l-digest", { source: "" }) }]);
+    rev = result.body.revision;
+    assert.equal(sourceOf("l-digest").source, "", "显式清空来源即认领");
+    result = await patch(rev, [{ op: "log.put", log: log("l-bad", { source: "Not Valid" }) }]);
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error.code, "INVALID_STATE");
+    database2.close();
+
     console.log("MyDays incremental state API test passed");
   } finally {
     child.kill("SIGTERM");

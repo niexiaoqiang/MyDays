@@ -373,6 +373,72 @@ try {
   throw error;
 }
 
+database.exec("BEGIN IMMEDIATE");
+try {
+  if (!database.prepare("PRAGMA table_info(logs)").all().some((column) => column.name === "source")) {
+    database.exec("ALTER TABLE logs ADD COLUMN source TEXT NOT NULL DEFAULT ''");
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      builtin INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1)),
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS agent_turns (
+      agent TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      turn_key TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
+      started_at TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      reply TEXT NOT NULL DEFAULT '',
+      received_at TEXT NOT NULL,
+      PRIMARY KEY (agent, session_id, turn_key)
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS idx_agent_turns_started ON agent_turns(started_at);
+
+    CREATE TABLE IF NOT EXISTS agent_digest_settings (
+      singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+      summary_time TEXT NOT NULL DEFAULT '18:30',
+      day_start_hour INTEGER NOT NULL DEFAULT 4 CHECK (day_start_hour BETWEEN 0 AND 12),
+      timezone TEXT NOT NULL DEFAULT 'UTC',
+      provider_id TEXT,
+      max_input_chars INTEGER NOT NULL DEFAULT 60000 CHECK (max_input_chars BETWEEN 5000 AND 200000),
+      instructions TEXT NOT NULL DEFAULT '',
+      excluded_projects_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS agent_digest_runs (
+      work_date TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('ok', 'empty', 'failed')),
+      finalized INTEGER NOT NULL DEFAULT 0 CHECK (finalized IN (0, 1)),
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      input_chars INTEGER NOT NULL DEFAULT 0,
+      item_count INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error_code TEXT,
+      last_turn_received_at TEXT,
+      ran_at TEXT NOT NULL
+    ) STRICT;
+
+    UPDATE metadata SET value = '8' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 8;
+  `);
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
 const statements = {
   getRevision: database.prepare("SELECT value FROM metadata WHERE key = 'revision'"),
   setRevision: database.prepare("UPDATE metadata SET value = ? WHERE key = 'revision'"),
@@ -395,7 +461,7 @@ const statements = {
     FROM tasks ORDER BY created_at ASC
   `),
   readLogs: database.prepare(`
-    SELECT id, work_date, title, project, source_task_id, created_at
+    SELECT id, work_date, title, project, source_task_id, source, created_at
     FROM logs ORDER BY created_at ASC
   `),
   readNotes: database.prepare("SELECT work_date, content FROM notes ORDER BY work_date ASC"),
@@ -420,8 +486,8 @@ const statements = {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `),
   insertLog: database.prepare(`
-    INSERT INTO logs(id, work_date, title, project, source_task_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO logs(id, work_date, title, project, source_task_id, created_at, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
   insertNote: database.prepare(`
     INSERT INTO notes(work_date, content, updated_at) VALUES (?, ?, ?)
@@ -471,11 +537,13 @@ const statements = {
   `),
   deleteTask: database.prepare("DELETE FROM tasks WHERE id = ?"),
   upsertLog: database.prepare(`
-    INSERT INTO logs(id, work_date, title, project, source_task_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO logs(id, work_date, title, project, source_task_id, created_at, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date, title = excluded.title,
-      project = excluded.project, source_task_id = excluded.source_task_id, created_at = excluded.created_at
+      project = excluded.project, source_task_id = excluded.source_task_id, created_at = excluded.created_at,
+      source = excluded.source
   `),
+  readLogSource: database.prepare("SELECT source FROM logs WHERE id = ?"),
   deleteLog: database.prepare("DELETE FROM logs WHERE id = ?"),
   upsertNote: database.prepare(`
     INSERT INTO notes(work_date, content, updated_at) VALUES (?, ?, ?)
@@ -1605,6 +1673,7 @@ function readState() {
     title: row.title,
     project: row.project,
     sourceTaskId: row.source_task_id,
+    source: row.source,
     createdAt: row.created_at,
   }));
 
@@ -1766,6 +1835,14 @@ function validateTaskValue(task, field) {
   };
 }
 
+function validateLogSource(value, field) {
+  if (value === undefined || value === null) return undefined;
+  if (value !== "" && (typeof value !== "string" || !/^[a-z0-9-]{1,40}$/.test(value))) {
+    throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  }
+  return value;
+}
+
 function validateLogValue(log, field) {
   if (!isPlainObject(log)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
   return {
@@ -1774,6 +1851,7 @@ function validateLogValue(log, field) {
     title: requireString(log.title, `${field}.title`, 120),
     project: requireString(log.project ?? "", `${field}.project`, 80, { allowEmpty: true }),
     sourceTaskId: requireString(log.sourceTaskId, `${field}.sourceTaskId`, 128, { nullable: true }),
+    source: validateLogSource(log.source, `${field}.source`),
     createdAt: requireTimestamp(log.createdAt, `${field}.createdAt`),
   };
 }
@@ -1830,6 +1908,7 @@ function validateState(input, {
   projectPeriodReviewsFallback = {},
   periodReportsFallback = {},
   projectPeriodReportsFallback = {},
+  logSourcesFallback = new Map(),
 } = {}) {
   if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", "data 必须是对象");
 
@@ -1849,6 +1928,7 @@ function validateState(input, {
     if (validated.sourceTaskId && !taskIds.has(validated.sourceTaskId)) {
       throw new HttpError(400, "INVALID_STATE", `logs[${index}].sourceTaskId 不存在`);
     }
+    validated.source ??= logSourcesFallback.get(validated.id) ?? "";
     return validated;
   });
 
@@ -1957,7 +2037,7 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
       );
     }
     for (const log of nextState.logs) {
-      statements.insertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt);
+      statements.insertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt, log.source);
     }
     const updatedAt = new Date().toISOString();
     for (const [date, content] of Object.entries(nextState.notes)) {
@@ -2060,7 +2140,8 @@ const PATCH_OPS = {
       if (log.sourceTaskId && !statements.taskExists.get(log.sourceTaskId)) {
         throw new HttpError(400, "INVALID_STATE", `${field}.log.sourceTaskId 不存在`);
       }
-      statements.upsertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt);
+      const source = log.source ?? statements.readLogSource.get(log.id)?.source ?? "";
+      statements.upsertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt, source);
     },
   },
   "log.delete": {
@@ -2468,6 +2549,7 @@ const server = createServer(async (request, response) => {
           projectPeriodReviewsFallback: currentState.projectPeriodReviews,
           periodReportsFallback: currentState.periodReports,
           projectPeriodReportsFallback: currentState.projectPeriodReports,
+          logSourcesFallback: new Map(currentState.logs.map((log) => [log.id, log.source])),
         });
         return sendJson(response, 200, replaceState(nextState, body.revision));
       }

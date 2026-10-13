@@ -583,7 +583,7 @@ async function waitForApp() {
     const stored = database.prepare("SELECT * FROM ai_providers WHERE id = ?").get(openaiId);
     assert.notEqual(stored.api_key_ciphertext, openaiKey);
     assert.equal(JSON.stringify(stored).includes(openaiKey), false);
-    assert.equal(database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "7");
+    assert.equal(database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "8");
     database.close();
     assert.equal(fs.existsSync(path.join(dataDir, ".ai-config-secret")), false, "环境变量密钥不得生成主密钥文件");
 

@@ -341,6 +341,7 @@ function normalizeLog(log) {
     title: log.title,
     project: log.project ?? "",
     sourceTaskId: log.sourceTaskId ?? null,
+    source: log.source ?? "",
     createdAt: log.createdAt,
   };
 }
@@ -1224,6 +1225,7 @@ function saveEntryEdit() {
   const previousDraft = makeDailyReviewDraft(entry.date);
   entry.title = title;
   entry.project = entryEdit.draft.project;
+  if (entryEdit.kind === "log") entry.source = "";
   if (entryEdit.kind === "task") {
     entry.priority = entryEdit.draft.priority;
     state.logs
