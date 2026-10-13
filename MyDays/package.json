@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js && node --check app.js",
-    "test:api": "node tests/api_test.cjs && node tests/schema_upgrade_test.cjs && node tests/ai_api_test.cjs && node tests/ai_secret_lifecycle_test.cjs && node tests/security_test.cjs"
+    "test:api": "node tests/api_test.cjs && node tests/patch_api_test.cjs && node tests/schema_upgrade_test.cjs && node tests/ai_api_test.cjs && node tests/ai_secret_lifecycle_test.cjs && node tests/security_test.cjs"
   },
   "engines": {
     "node": ">=24.0.0"

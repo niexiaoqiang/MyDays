@@ -11,6 +11,7 @@ const PORT = Number.parseInt(process.env.PORT ?? "3000", 10);
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "data");
 const DATABASE_PATH = process.env.DATABASE_PATH ?? path.join(DATA_DIR, "mydays.db");
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_PATCH_OPS = 500;
 const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 const MAX_AI_SUMMARY_FIELD_LENGTH = 4000;
 const MAX_AI_SUMMARY_ITEMS = 120;
@@ -458,6 +459,71 @@ const statements = {
   insertProjectPeriodReport: database.prepare(`
     INSERT INTO project_period_reports(period_type, period_start, project, content, updated_at)
     VALUES (?, ?, ?, ?, ?)
+  `),
+  taskExists: database.prepare("SELECT 1 AS found FROM tasks WHERE id = ?"),
+  upsertTask: database.prepare(`
+    INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date, title = excluded.title,
+      project = excluded.project, priority = excluded.priority, completed = excluded.completed,
+      created_at = excluded.created_at, completed_at = excluded.completed_at
+  `),
+  deleteTask: database.prepare("DELETE FROM tasks WHERE id = ?"),
+  upsertLog: database.prepare(`
+    INSERT INTO logs(id, work_date, title, project, source_task_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date, title = excluded.title,
+      project = excluded.project, source_task_id = excluded.source_task_id, created_at = excluded.created_at
+  `),
+  deleteLog: database.prepare("DELETE FROM logs WHERE id = ?"),
+  upsertNote: database.prepare(`
+    INSERT INTO notes(work_date, content, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(work_date) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+  `),
+  deleteNote: database.prepare("DELETE FROM notes WHERE work_date = ?"),
+  upsertReview: database.prepare(`
+    INSERT INTO reviews(work_date, wins, blockers, next_actions, completed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(work_date) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
+      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
+  `),
+  deleteReview: database.prepare("DELETE FROM reviews WHERE work_date = ?"),
+  upsertProjectReview: database.prepare(`
+    INSERT INTO project_reviews(work_date, project, wins, blockers, next_actions, completed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(work_date, project) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
+      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
+  `),
+  deleteProjectReview: database.prepare("DELETE FROM project_reviews WHERE work_date = ? AND project = ?"),
+  upsertPeriodReview: database.prepare(`
+    INSERT INTO period_reviews(period_type, period_start, wins, blockers, next_actions, completed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(period_type, period_start) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
+      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
+  `),
+  deletePeriodReview: database.prepare("DELETE FROM period_reviews WHERE period_type = ? AND period_start = ?"),
+  upsertProjectPeriodReview: database.prepare(`
+    INSERT INTO project_period_reviews(
+      period_type, period_start, project, wins, blockers, next_actions, completed_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(period_type, period_start, project) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
+      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
+  `),
+  deleteProjectPeriodReview: database.prepare(`
+    DELETE FROM project_period_reviews WHERE period_type = ? AND period_start = ? AND project = ?
+  `),
+  upsertPeriodReport: database.prepare(`
+    INSERT INTO period_reports(period_type, period_start, content, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(period_type, period_start) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+  `),
+  deletePeriodReport: database.prepare("DELETE FROM period_reports WHERE period_type = ? AND period_start = ?"),
+  upsertProjectPeriodReport: database.prepare(`
+    INSERT INTO project_period_reports(period_type, period_start, project, content, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(period_type, period_start, project) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+  `),
+  deleteProjectPeriodReport: database.prepare(`
+    DELETE FROM project_period_reports WHERE period_type = ? AND period_start = ? AND project = ?
   `),
   readAiProviders: database.prepare(`
     SELECT id, name, protocol, base_url, model, timeout_ms, options_json,
@@ -1967,6 +2033,169 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
   }
 }
 
+function requirePeriodKey(key, field) {
+  const match = typeof key === "string" ? /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key) : null;
+  if (!match) throw new HttpError(400, "INVALID_STATE", `${field} 的键无效`);
+  validatePeriodStart(match[1], match[2], `${field} 起始日`);
+  return [match[1], match[2]];
+}
+
+const reviewParams = (review, now) => [review.wins, review.blockers, review.next, review.completedAt, now];
+
+const PATCH_OPS = {
+  "task.put": {
+    parse: (op, field) => ({ task: validateTaskValue(op.task, `${field}.task`) }),
+    run: ({ task }) => statements.upsertTask.run(
+      task.id, task.date, task.title, task.project, task.priority, task.completed ? 1 : 0, task.createdAt, task.completedAt,
+    ),
+  },
+  "task.delete": {
+    parse: (op, field) => ({ id: requireString(op.id, `${field}.id`, 128) }),
+    run: ({ id }) => statements.deleteTask.run(id),
+  },
+  "log.put": {
+    parse: (op, field) => ({ log: validateLogValue(op.log, `${field}.log`), field }),
+    run: ({ log, field }) => {
+      if (log.sourceTaskId && !statements.taskExists.get(log.sourceTaskId)) {
+        throw new HttpError(400, "INVALID_STATE", `${field}.log.sourceTaskId 不存在`);
+      }
+      statements.upsertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt);
+    },
+  },
+  "log.delete": {
+    parse: (op, field) => ({ id: requireString(op.id, `${field}.id`, 128) }),
+    run: ({ id }) => statements.deleteLog.run(id),
+  },
+  "note.put": {
+    parse: (op, field) => ({
+      date: requireDate(op.date, `${field}.date`),
+      content: requireString(op.content, `${field}.content`, 2000, { allowEmpty: true }),
+    }),
+    run: ({ date, content }, now) => statements.upsertNote.run(date, content, now),
+  },
+  "note.delete": {
+    parse: (op, field) => ({ date: requireDate(op.date, `${field}.date`) }),
+    run: ({ date }) => statements.deleteNote.run(date),
+  },
+  "review.put": {
+    parse: (op, field) => ({
+      date: requireDate(op.date, `${field}.date`),
+      review: validateReviewValue(op.review, `${field}.review`, 1200),
+    }),
+    run: ({ date, review }, now) => statements.upsertReview.run(date, ...reviewParams(review, now)),
+  },
+  "review.delete": {
+    parse: (op, field) => ({ date: requireDate(op.date, `${field}.date`) }),
+    run: ({ date }) => statements.deleteReview.run(date),
+  },
+  "projectReview.put": {
+    parse: (op, field) => ({
+      date: requireDate(op.date, `${field}.date`),
+      project: requireString(op.project, `${field}.project`, 80),
+      review: validateReviewValue(op.review, `${field}.review`, 1200),
+    }),
+    run: ({ date, project, review }, now) => statements.upsertProjectReview.run(date, project, ...reviewParams(review, now)),
+  },
+  "projectReview.delete": {
+    parse: (op, field) => ({
+      date: requireDate(op.date, `${field}.date`),
+      project: requireString(op.project, `${field}.project`, 80),
+    }),
+    run: ({ date, project }) => statements.deleteProjectReview.run(date, project),
+  },
+  "periodReview.put": {
+    parse: (op, field) => ({
+      period: requirePeriodKey(op.key, `${field}.key`),
+      review: validateReviewValue(op.review, `${field}.review`, 4000),
+    }),
+    run: ({ period, review }, now) => statements.upsertPeriodReview.run(...period, ...reviewParams(review, now)),
+  },
+  "periodReview.delete": {
+    parse: (op, field) => ({ period: requirePeriodKey(op.key, `${field}.key`) }),
+    run: ({ period }) => statements.deletePeriodReview.run(...period),
+  },
+  "projectPeriodReview.put": {
+    parse: (op, field) => ({
+      period: requirePeriodKey(op.key, `${field}.key`),
+      project: requireString(op.project, `${field}.project`, 80),
+      review: validateReviewValue(op.review, `${field}.review`, 4000),
+    }),
+    run: ({ period, project, review }, now) => statements.upsertProjectPeriodReview.run(
+      ...period, project, ...reviewParams(review, now),
+    ),
+  },
+  "projectPeriodReview.delete": {
+    parse: (op, field) => ({
+      period: requirePeriodKey(op.key, `${field}.key`),
+      project: requireString(op.project, `${field}.project`, 80),
+    }),
+    run: ({ period, project }) => statements.deleteProjectPeriodReview.run(...period, project),
+  },
+  "periodReport.put": {
+    parse: (op, field) => ({
+      period: requirePeriodKey(op.key, `${field}.key`),
+      report: validateReportValue(op.report, `${field}.report`),
+    }),
+    run: ({ period, report }, now) => statements.upsertPeriodReport.run(...period, report.content, now),
+  },
+  "periodReport.delete": {
+    parse: (op, field) => ({ period: requirePeriodKey(op.key, `${field}.key`) }),
+    run: ({ period }) => statements.deletePeriodReport.run(...period),
+  },
+  "projectPeriodReport.put": {
+    parse: (op, field) => ({
+      period: requirePeriodKey(op.key, `${field}.key`),
+      project: requireString(op.project, `${field}.project`, 80),
+      report: validateReportValue(op.report, `${field}.report`),
+    }),
+    run: ({ period, project, report }, now) => statements.upsertProjectPeriodReport.run(
+      ...period, project, report.content, now,
+    ),
+  },
+  "projectPeriodReport.delete": {
+    parse: (op, field) => ({
+      period: requirePeriodKey(op.key, `${field}.key`),
+      project: requireString(op.project, `${field}.project`, 80),
+    }),
+    run: ({ period, project }) => statements.deleteProjectPeriodReport.run(...period, project),
+  },
+};
+
+function validatePatch(input) {
+  if (!isPlainObject(input)) throw new HttpError(400, "INVALID_PATCH", "请求内容必须是对象");
+  if (!Number.isSafeInteger(input.baseRevision) || input.baseRevision < 0) {
+    throw new HttpError(400, "INVALID_REVISION", "baseRevision 无效");
+  }
+  if (!Array.isArray(input.ops) || !input.ops.length || input.ops.length > MAX_PATCH_OPS) {
+    throw new HttpError(400, "INVALID_PATCH", `ops 必须是 1 到 ${MAX_PATCH_OPS} 条变更组成的数组`);
+  }
+  const ops = input.ops.map((op, index) => {
+    const handler = isPlainObject(op) && typeof op.op === "string" && Object.hasOwn(PATCH_OPS, op.op)
+      ? PATCH_OPS[op.op]
+      : null;
+    if (!handler) throw new HttpError(400, "INVALID_PATCH", `ops[${index}].op 无效`);
+    return { handler, args: handler.parse(op, `ops[${index}]`) };
+  });
+  return { baseRevision: input.baseRevision, ops };
+}
+
+function applyPatch({ baseRevision, ops }) {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const currentRevision = getRevision();
+    const now = new Date().toISOString();
+    for (const { handler, args } of ops) handler.run(args, now);
+    const nextRevision = currentRevision + 1;
+    statements.setRevision.run(String(nextRevision));
+    statements.completeMigration.run();
+    database.exec("COMMIT");
+    return { revision: nextRevision, stale: baseRevision !== currentRevision };
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function singleHeaderValue(request, name) {
   const raw = request.headers[name];
   if (raw === undefined) return null;
@@ -2240,6 +2469,9 @@ const server = createServer(async (request, response) => {
           projectPeriodReportsFallback: currentState.projectPeriodReports,
         });
         return sendJson(response, 200, replaceState(nextState, body.revision));
+      }
+      if (request.method === "PATCH") {
+        return sendJson(response, 200, applyPatch(validatePatch(await readJsonBody(request))));
       }
       throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
     }
