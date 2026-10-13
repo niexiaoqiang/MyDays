@@ -1678,6 +1678,39 @@ function validateReportValue(report, field) {
   };
 }
 
+function validateTaskValue(task, field) {
+  if (!isPlainObject(task)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  const id = requireString(task.id, `${field}.id`, 128);
+  if (!["low", "normal", "high"].includes(task.priority)) {
+    throw new HttpError(400, "INVALID_STATE", `${field}.priority 无效`);
+  }
+  if (typeof task.completed !== "boolean") {
+    throw new HttpError(400, "INVALID_STATE", `${field}.completed 必须是布尔值`);
+  }
+  return {
+    id,
+    date: requireDate(task.date, `${field}.date`),
+    title: requireString(task.title, `${field}.title`, 120),
+    project: requireString(task.project ?? "", `${field}.project`, 80, { allowEmpty: true }),
+    priority: task.priority,
+    completed: task.completed,
+    createdAt: requireTimestamp(task.createdAt, `${field}.createdAt`),
+    completedAt: requireTimestamp(task.completedAt, `${field}.completedAt`, { nullable: true }),
+  };
+}
+
+function validateLogValue(log, field) {
+  if (!isPlainObject(log)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  return {
+    id: requireString(log.id, `${field}.id`, 128),
+    date: requireDate(log.date, `${field}.date`),
+    title: requireString(log.title, `${field}.title`, 120),
+    project: requireString(log.project ?? "", `${field}.project`, 80, { allowEmpty: true }),
+    sourceTaskId: requireString(log.sourceTaskId, `${field}.sourceTaskId`, 128, { nullable: true }),
+    createdAt: requireTimestamp(log.createdAt, `${field}.createdAt`),
+  };
+}
+
 function validateProjectReviewMap(input, field, { period = false, maxEntries = 100000 } = {}) {
   if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", `${field} 必须是有效对象`);
   const groups = [];
@@ -1735,46 +1768,21 @@ function validateState(input, {
 
   const taskIds = new Set();
   const tasks = requireArray(input.tasks, "tasks", 10000).map((task, index) => {
-    if (!isPlainObject(task)) throw new HttpError(400, "INVALID_STATE", `tasks[${index}] 无效`);
-    const id = requireString(task.id, `tasks[${index}].id`, 128);
-    if (taskIds.has(id)) throw new HttpError(400, "INVALID_STATE", `待办 ID 重复：${id}`);
-    taskIds.add(id);
-    if (!['low', 'normal', 'high'].includes(task.priority)) {
-      throw new HttpError(400, "INVALID_STATE", `tasks[${index}].priority 无效`);
-    }
-    if (typeof task.completed !== "boolean") {
-      throw new HttpError(400, "INVALID_STATE", `tasks[${index}].completed 必须是布尔值`);
-    }
-    return {
-      id,
-      date: requireDate(task.date, `tasks[${index}].date`),
-      title: requireString(task.title, `tasks[${index}].title`, 120),
-      project: requireString(task.project ?? "", `tasks[${index}].project`, 80, { allowEmpty: true }),
-      priority: task.priority,
-      completed: task.completed,
-      createdAt: requireTimestamp(task.createdAt, `tasks[${index}].createdAt`),
-      completedAt: requireTimestamp(task.completedAt, `tasks[${index}].completedAt`, { nullable: true }),
-    };
+    const validated = validateTaskValue(task, `tasks[${index}]`);
+    if (taskIds.has(validated.id)) throw new HttpError(400, "INVALID_STATE", `待办 ID 重复：${validated.id}`);
+    taskIds.add(validated.id);
+    return validated;
   });
 
   const logIds = new Set();
   const logs = requireArray(input.logs, "logs", 20000).map((log, index) => {
-    if (!isPlainObject(log)) throw new HttpError(400, "INVALID_STATE", `logs[${index}] 无效`);
-    const id = requireString(log.id, `logs[${index}].id`, 128);
-    if (logIds.has(id)) throw new HttpError(400, "INVALID_STATE", `记录 ID 重复：${id}`);
-    logIds.add(id);
-    const sourceTaskId = requireString(log.sourceTaskId, `logs[${index}].sourceTaskId`, 128, { nullable: true });
-    if (sourceTaskId && !taskIds.has(sourceTaskId)) {
+    const validated = validateLogValue(log, `logs[${index}]`);
+    if (logIds.has(validated.id)) throw new HttpError(400, "INVALID_STATE", `记录 ID 重复：${validated.id}`);
+    logIds.add(validated.id);
+    if (validated.sourceTaskId && !taskIds.has(validated.sourceTaskId)) {
       throw new HttpError(400, "INVALID_STATE", `logs[${index}].sourceTaskId 不存在`);
     }
-    return {
-      id,
-      date: requireDate(log.date, `logs[${index}].date`),
-      title: requireString(log.title, `logs[${index}].title`, 120),
-      project: requireString(log.project ?? "", `logs[${index}].project`, 80, { allowEmpty: true }),
-      sourceTaskId,
-      createdAt: requireTimestamp(log.createdAt, `logs[${index}].createdAt`),
-    };
+    return validated;
   });
 
   if (!isPlainObject(input.notes) || Object.keys(input.notes).length > 36600) {
