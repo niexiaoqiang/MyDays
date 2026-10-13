@@ -121,6 +121,20 @@ async function expectStartupFailure(env, expectedText) {
     assert.equal(response.status, 409, "旧 revision 应继续受到并发控制保护");
     response = await fetch(`${baseUrl}/api/state`, { method: "PUT", headers: { Cookie: cookie, "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ data: refererState.data, revision: refererState.revision }) });
     assert.equal(response.status, 200, "同源 Origin 的修改请求应成功");
+    assert.equal((await fetch(`${baseUrl}/api/agent-tokens`)).status, 401, "令牌管理必须要求登录");
+    response = await fetch(`${baseUrl}/api/agent-tokens`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json", Origin: "https://evil.example" }, body: JSON.stringify({ name: "跨站令牌" }) });
+    assert.equal(response.status, 403, "令牌创建必须受同源保护");
+    response = await fetch(`${baseUrl}/api/agent-tokens`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ name: "采集器" }) });
+    assert.equal(response.status, 201);
+    const agentToken = (await response.json()).token;
+    const bearer = { Authorization: `Bearer ${agentToken}` };
+    assert.equal((await fetch(`${baseUrl}/api/agent/config`, { headers: bearer })).status, 200, "采集器令牌不需要登录会话");
+    for (const route of ["/api/state", "/api/agent-tokens", "/api/agent-digest/settings", "/api/agent-digest/status", "/api/ai/providers", "/api/projects"]) {
+      assert.equal((await fetch(`${baseUrl}${route}`, { headers: bearer })).status, 401, `采集器令牌不得访问 ${route}`);
+    }
+    assert.equal((await fetch(`${baseUrl}/`, { headers: bearer, redirect: "manual" })).status, 302, "采集器令牌不得访问页面");
+    response = await fetch(`${baseUrl}/api/agent/turns`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ turns: [] }) });
+    assert.equal(response.status, 401, "登录会话不能代替采集器令牌");
     response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Cookie: cookie, Origin: baseUrl } });
     assert.equal(response.status, 200);
     assert.equal((await fetch(`${baseUrl}/api/state`, { headers: { Cookie: cookie } })).status, 401);
