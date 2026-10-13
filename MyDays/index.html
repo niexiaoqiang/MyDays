@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=25" />
+    <link rel="stylesheet" href="/styles.css?v=26" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -576,6 +576,40 @@
                 <div><button class="soft-button" id="ai-prompt-reset" type="button">恢复默认</button><button class="primary-button" id="ai-prompt-save" type="button">保存偏好</button></div>
               </div>
             </section>
+            <section class="panel ai-prompt-panel agent-digest-panel" aria-labelledby="agent-digest-title">
+              <div class="ai-editor-heading">
+                <div><p class="section-kicker">AGENT DIGEST</p><h2 id="agent-digest-title">Agent 工作汇总</h2><p>每天自动把你在 Claude Code、Codex 中完成的工作整理成几条主要工作，写入时间线。</p></div>
+                <label class="switch"><input type="checkbox" id="agent-digest-enabled" role="switch" aria-describedby="agent-digest-notice" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="agent-digest-enabled-label">已关闭</span></label>
+              </div>
+              <p class="agent-digest-notice" id="agent-digest-notice">开启后，采集器只读取会话中你的提问和 agent 每轮的最终答复（不含工具输出），常见形态的密钥会被隐藏但无法保证完全。这些摘录在 MyDays 中暂存 30 天，并在每天整理时发送给下方选择的 AI 服务。</p>
+              <div class="ai-form-grid agent-digest-form">
+                <label class="ai-field"><span>每天整理时间</span><input id="agent-digest-time" type="time" required /></label>
+                <label class="ai-field"><span>一天从几点算起</span><div class="ai-input-suffix"><input id="agent-digest-day-start" type="number" min="0" max="12" step="1" /><span>点</span></div><small>这个时间之前的工作算作前一天。</small></label>
+                <label class="ai-field"><span>时区</span><input id="agent-digest-timezone" maxlength="64" autocomplete="off" spellcheck="false" /><small id="agent-digest-timezone-hint"></small></label>
+                <label class="ai-field"><span>使用的 AI 服务</span><select id="agent-digest-provider"></select></label>
+                <label class="ai-field"><span>每日输入上限</span><div class="ai-input-suffix"><input id="agent-digest-max-input" type="number" min="5000" max="200000" step="1000" /><span>字</span></div><small>超出时自动压缩素材，用来控制模型开销。</small></label>
+                <label class="ai-field"><span>排除的项目</span><input id="agent-digest-excluded" maxlength="2000" autocomplete="off" placeholder="目录名，用逗号分隔" /><small>这些目录下的会话不会进入汇总。</small></label>
+                <label class="ai-field ai-field-wide"><span>整理偏好（可选）</span><textarea id="agent-digest-instructions" maxlength="2000" placeholder="例如：把调研和排查类工作也单独列出。"></textarea></label>
+              </div>
+              <div class="ai-prompt-actions">
+                <span id="agent-digest-state" role="status" aria-live="polite">正在读取设置…</span>
+                <div><button class="soft-button" id="agent-digest-refresh" type="button">刷新状态</button><button class="primary-button" id="agent-digest-save" type="button">保存设置</button></div>
+              </div>
+              <h3 class="agent-digest-subtitle">最近 8 天</h3>
+              <div class="agent-digest-days" id="agent-digest-days" role="table" aria-label="最近 8 天的整理状态"></div>
+              <div class="agent-digest-storage"><span id="agent-digest-stored"></span><button class="text-button danger-text" id="agent-digest-clear" type="button">清除已采集素材</button></div>
+              <h3 class="agent-digest-subtitle">采集器</h3>
+              <p class="agent-digest-help">MyDays 和 agent 在同一台电脑时，在项目目录执行 <code>docker compose --profile agent-digest up -d</code> 启动随附的采集器，无需手动配置令牌。在其他电脑上采集时，创建一个令牌并用 <code>MYDAYS_URL</code>、<code>MYDAYS_TOKEN</code> 运行 <code>node collector/collector.mjs</code>。</p>
+              <form class="agent-token-form" id="agent-token-form">
+                <input id="agent-token-name" maxlength="60" autocomplete="off" placeholder="令牌名称，例如：办公室电脑" aria-label="令牌名称" required />
+                <button class="soft-button" type="submit">创建令牌</button>
+              </form>
+              <div class="agent-token-created" id="agent-token-created" hidden>
+                <p>令牌只显示这一次，请立即保存：</p>
+                <div><code id="agent-token-value"></code><button class="soft-button" id="agent-token-copy" type="button">复制</button></div>
+              </div>
+              <div class="agent-token-list" id="agent-token-list"></div>
+            </section>
           </section>
 
           <footer class="page-footer">
@@ -623,6 +657,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=26"></script>
+    <script src="/app.js?v=27"></script>
   </body>
 </html>

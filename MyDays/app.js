@@ -114,6 +114,28 @@ const elements = {
   accountMenu: document.querySelector("#account-menu"),
   logoutButton: document.querySelector("#logout-button"),
   themeOptions: [...document.querySelectorAll("[data-theme-option]")],
+  agentDigestEnabled: document.querySelector("#agent-digest-enabled"),
+  agentDigestEnabledLabel: document.querySelector("#agent-digest-enabled-label"),
+  agentDigestTime: document.querySelector("#agent-digest-time"),
+  agentDigestDayStart: document.querySelector("#agent-digest-day-start"),
+  agentDigestTimezone: document.querySelector("#agent-digest-timezone"),
+  agentDigestTimezoneHint: document.querySelector("#agent-digest-timezone-hint"),
+  agentDigestProvider: document.querySelector("#agent-digest-provider"),
+  agentDigestMaxInput: document.querySelector("#agent-digest-max-input"),
+  agentDigestExcluded: document.querySelector("#agent-digest-excluded"),
+  agentDigestInstructions: document.querySelector("#agent-digest-instructions"),
+  agentDigestState: document.querySelector("#agent-digest-state"),
+  agentDigestRefresh: document.querySelector("#agent-digest-refresh"),
+  agentDigestSave: document.querySelector("#agent-digest-save"),
+  agentDigestDays: document.querySelector("#agent-digest-days"),
+  agentDigestStored: document.querySelector("#agent-digest-stored"),
+  agentDigestClear: document.querySelector("#agent-digest-clear"),
+  agentTokenForm: document.querySelector("#agent-token-form"),
+  agentTokenName: document.querySelector("#agent-token-name"),
+  agentTokenCreated: document.querySelector("#agent-token-created"),
+  agentTokenValue: document.querySelector("#agent-token-value"),
+  agentTokenCopy: document.querySelector("#agent-token-copy"),
+  agentTokenList: document.querySelector("#agent-token-list"),
   footerDate: document.querySelector("#footer-date"),
   toast: document.querySelector("#toast"),
   emptyTaskTemplate: document.querySelector("#empty-task-template"),
@@ -234,6 +256,8 @@ let aiModelsRequestVersion = 0;
 let aiSummarySettingsLoaded = false;
 let projectOptions = [];
 let entryEdit = null;
+let agentDigest = null;
+let agentDigestRunningDate = null;
 
 function setAccountMenu(open, { restoreFocus = false } = {}) {
   if (open) closeSummaryExportMenu();
@@ -243,11 +267,224 @@ function setAccountMenu(open, { restoreFocus = false } = {}) {
   else if (restoreFocus) elements.accountMenuButton.focus();
 }
 
+function logOriginLabel(log) {
+  if (log.sourceTaskId) return "完成待办";
+  return log.source === "agent-digest" ? '<span class="origin-chip">AI 整理</span>' : "手动记录";
+}
+
 function renderThemeSwitch() {
   const theme = window.MyDaysTheme?.get() ?? "system";
   elements.themeOptions.forEach((option) => {
     option.setAttribute("aria-pressed", String(option.dataset.themeOption === theme));
   });
+}
+
+const AGENT_DIGEST_ERRORS = {
+  AI_UPSTREAM_ERROR: "AI 服务出错",
+  AI_TIMEOUT: "AI 服务超时",
+  AI_CONNECTION_FAILED: "无法连接 AI 服务",
+  AI_AUTH_FAILED: "API Key 被拒绝",
+  AI_RATE_LIMITED: "AI 服务限流",
+  AI_RESPONSE_TRUNCATED: "输出被截断",
+  AI_RESPONSE_INVALID: "返回格式无效",
+  AI_KEY_UNREADABLE: "API Key 无法解密",
+  AGENT_DIGEST_PROVIDER_REQUIRED: "未配置可用的 AI 服务",
+};
+
+function browserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+async function loadAgentDigest({ fillForm = true } = {}) {
+  agentDigest = await requestJson("/api/agent-digest/status");
+  renderAgentDigest({ fillForm });
+}
+
+function renderAgentDigest({ fillForm = false } = {}) {
+  if (!agentDigest) return;
+  const { settings } = agentDigest;
+  elements.agentDigestEnabled.checked = settings.enabled;
+  elements.agentDigestEnabledLabel.textContent = settings.enabled ? "已开启" : "已关闭";
+  const providerOptions = [
+    new Option("跟随默认服务", ""),
+    ...aiProviders.map((provider) => new Option(`${provider.name} · ${provider.model}`, provider.id)),
+  ];
+  const selectedProvider = fillForm ? settings.providerId ?? "" : elements.agentDigestProvider.value;
+  elements.agentDigestProvider.replaceChildren(...providerOptions);
+  elements.agentDigestProvider.value = providerOptions.some((option) => option.value === selectedProvider) ? selectedProvider : "";
+  if (fillForm) {
+    elements.agentDigestTime.value = settings.summaryTime;
+    elements.agentDigestDayStart.value = settings.dayStartHour;
+    elements.agentDigestTimezone.value = settings.updatedAt ? settings.timezone : browserTimeZone();
+    elements.agentDigestMaxInput.value = settings.maxInputChars;
+    elements.agentDigestExcluded.value = settings.excludedProjects.join("，");
+    elements.agentDigestInstructions.value = settings.instructions;
+    elements.agentDigestState.textContent = agentDigest.providerReady
+      ? "设置已载入"
+      : "开启前需要先在上方配置带 API Key 的 AI 服务";
+  }
+  const zone = browserTimeZone();
+  elements.agentDigestTimezoneHint.textContent = elements.agentDigestTimezone.value === zone ? "与当前浏览器一致" : `当前浏览器时区：${zone}`;
+
+  elements.agentDigestDays.innerHTML = agentDigest.days.map((day) => {
+    const run = day.run;
+    let status = day.turnCount ? "待整理" : "—";
+    let tone = "";
+    if (run?.status === "ok") status = `已整理 ${run.itemCount} 条${run.finalized ? "" : "（次日定稿）"}`;
+    if (run?.status === "empty") status = day.turnCount ? "没有需要记录的主要工作" : "—";
+    if (run?.status === "failed") {
+      status = `失败：${AGENT_DIGEST_ERRORS[run.errorCode] ?? run.errorCode ?? "未知错误"}（第 ${run.attempts} 次）`;
+      tone = " failed";
+    }
+    const running = agentDigestRunningDate === day.date;
+    const detail = run && run.inputChars ? `输入 ${run.inputChars.toLocaleString("zh-CN")} 字` : "";
+    return `
+      <div class="agent-digest-day${tone}" role="row">
+        <strong role="cell">${escapeHtml(day.date.slice(5).replace("-", "/"))}</strong>
+        <span role="cell">${day.turnCount} 轮${day.agents.length ? ` · ${escapeHtml(day.agents.join("、"))}` : ""}</span>
+        <span role="cell" class="agent-digest-day-status">${escapeHtml(status)}${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</span>
+        <span role="cell"><button class="text-button" type="button" data-digest-run="${escapeAttribute(day.date)}" ${!settings.enabled || !day.turnCount || agentDigestRunningDate ? "disabled" : ""}>${running ? "整理中…" : "重新整理"}</button></span>
+      </div>`;
+  }).join("");
+  elements.agentDigestStored.textContent = `已暂存 ${agentDigest.storedTurns} 轮素材，保留 ${agentDigest.retentionDays} 天后自动清理`;
+  elements.agentDigestClear.disabled = !agentDigest.storedTurns;
+
+  const active = agentDigest.tokens.filter((token) => !token.revokedAt);
+  elements.agentTokenList.innerHTML = active.length
+    ? active.map((token) => `
+      <div class="agent-token-row">
+        <span><strong>${escapeHtml(token.name)}</strong>${token.builtin ? '<i class="origin-chip">自动</i>' : ""}<small><code>${escapeHtml(token.prefix)}…</code> · ${token.lastUsedAt ? `最近连接 ${escapeHtml(formatDateTime(token.lastUsedAt))}` : "尚未连接"}</small></span>
+        <button class="text-button danger-text" type="button" data-token-revoke="${escapeAttribute(token.id)}" data-token-name="${escapeAttribute(token.name)}">吊销</button>
+      </div>`).join("")
+    : '<div class="summary-empty">还没有采集器令牌。开启功能后会自动创建本机采集器的令牌。</div>';
+}
+
+function formatDateTime(timestamp) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function readAgentDigestForm() {
+  return {
+    summaryTime: elements.agentDigestTime.value,
+    dayStartHour: Number(elements.agentDigestDayStart.value),
+    timezone: elements.agentDigestTimezone.value.trim(),
+    providerId: elements.agentDigestProvider.value || null,
+    maxInputChars: Number(elements.agentDigestMaxInput.value),
+    excludedProjects: elements.agentDigestExcluded.value.split(/[,，\n]/).map((name) => name.trim()).filter(Boolean),
+    instructions: elements.agentDigestInstructions.value,
+  };
+}
+
+async function putAgentDigestSettings(body, successMessage) {
+  await requestJson("/api/agent-digest/settings", { method: "PUT", body: JSON.stringify(body) });
+  await loadAgentDigest();
+  elements.agentDigestState.textContent = successMessage;
+}
+
+async function toggleAgentDigest() {
+  const enable = elements.agentDigestEnabled.checked;
+  if (enable) {
+    const provider = aiProviders.find((entry) => entry.id === elements.agentDigestProvider.value) ?? aiProviders.find((entry) => entry.isDefault);
+    const confirmed = window.confirm([
+      "开启 Agent 工作汇总？",
+      "",
+      "采集器会读取本机 Claude Code、Codex 会话中你的提问和 agent 的最终答复，暂存在 MyDays 中，",
+      `并在每天整理时发送给 AI 服务${provider ? `「${provider.name}」` : ""}。密钥隐藏只是尽力而为。`,
+    ].join("\n"));
+    if (!confirmed) {
+      elements.agentDigestEnabled.checked = false;
+      return;
+    }
+  }
+  try {
+    await putAgentDigestSettings(
+      { ...readAgentDigestForm(), enabled: enable },
+      enable ? "已开启，采集器将在几分钟内开始同步" : "已关闭，采集器不再读取会话，也不会再调用 AI",
+    );
+    showToast(enable ? "Agent 工作汇总已开启" : "Agent 工作汇总已关闭");
+  } catch (error) {
+    elements.agentDigestEnabled.checked = !enable;
+    elements.agentDigestState.textContent = error.message;
+    showToast(error.message);
+  }
+}
+
+async function saveAgentDigestSettings() {
+  try {
+    await putAgentDigestSettings(readAgentDigestForm(), "设置已保存");
+    showToast("Agent 工作汇总设置已保存");
+  } catch (error) {
+    elements.agentDigestState.textContent = error.message;
+    showToast(`保存失败：${error.message}`);
+  }
+}
+
+async function reloadIfServerChanged() {
+  if (deferredSave || diffState(syncedState, state).length) return;
+  const result = await requestJson("/api/state");
+  if (result.revision === revision) return;
+  adoptServerState(result);
+  render();
+}
+
+async function runAgentDigest(date) {
+  if (agentDigestRunningDate) return;
+  agentDigestRunningDate = date;
+  renderAgentDigest();
+  try {
+    agentDigest = await requestJson("/api/agent-digest/run", { method: "POST", body: JSON.stringify({ date }) });
+    const run = agentDigest.days.find((day) => day.date === date)?.run;
+    showToast(run?.status === "failed" ? `整理失败：${AGENT_DIGEST_ERRORS[run.errorCode] ?? run.errorCode}` : "已重新整理");
+    await reloadIfServerChanged();
+  } catch (error) {
+    showToast(`整理失败：${error.message}`);
+  } finally {
+    agentDigestRunningDate = null;
+    renderAgentDigest();
+  }
+}
+
+async function clearAgentTurns() {
+  if (!window.confirm("清除全部已采集的素材？已经写入时间线的记录不受影响；采集器之后仍会重新同步最近 8 天的会话。")) return;
+  try {
+    await requestJson("/api/agent-digest/turns", { method: "DELETE" });
+    await loadAgentDigest({ fillForm: false });
+    showToast("已清除采集的素材");
+  } catch (error) {
+    showToast(`清除失败：${error.message}`);
+  }
+}
+
+async function createAgentToken(event) {
+  event.preventDefault();
+  const name = elements.agentTokenName.value.trim();
+  if (!name) return;
+  try {
+    const created = await requestJson("/api/agent-tokens", { method: "POST", body: JSON.stringify({ name }) });
+    elements.agentTokenValue.textContent = created.token;
+    elements.agentTokenCreated.hidden = false;
+    elements.agentTokenName.value = "";
+    await loadAgentDigest({ fillForm: false });
+  } catch (error) {
+    showToast(`创建失败：${error.message}`);
+  }
+}
+
+async function revokeAgentToken(id, name) {
+  if (!window.confirm(`吊销令牌「${name}」？使用它的采集器将立即无法连接。`)) return;
+  try {
+    await requestJson(`/api/agent-tokens/${id}`, { method: "DELETE" });
+    await loadAgentDigest({ fillForm: false });
+    showToast("令牌已吊销");
+  } catch (error) {
+    showToast(`吊销失败：${error.message}`);
+  }
 }
 
 function closeSummaryExportMenu({ restoreFocus = false } = {}) {
@@ -602,6 +839,9 @@ async function bootstrap() {
     adoptServerState(result);
     try {
       await Promise.all([loadAiProviders(), loadAiSummarySettings(), loadProjectOptions()]);
+      await loadAgentDigest().catch((digestError) => {
+        elements.agentDigestState.textContent = `读取失败：${digestError.message}`;
+      });
     } catch (aiError) {
       elements.aiTestResult.textContent = `AI 配置加载失败：${aiError.message}`;
       elements.aiTestResult.className = "ai-test-result failed";
@@ -946,7 +1186,7 @@ function renderOverview() {
 
   if (recentLogs.length) {
     elements.overviewLogList.innerHTML = recentLogs.slice(0, 3).map((log) => {
-      const meta = `${log.sourceTaskId ? "完成待办" : "手动记录"}${log.project ? ` · ${escapeHtml(log.project)}` : ""}`;
+      const meta = `${logOriginLabel(log)}${log.project ? ` · ${escapeHtml(log.project)}` : ""}`;
       return `<article class="overview-item">
         <time class="overview-item-time">${formatTime(log.createdAt)}</time>
         <span class="overview-item-marker log" aria-hidden="true"></span>
@@ -1317,7 +1557,7 @@ function renderTimeline() {
       <i class="timeline-dot"></i>
       ${editing ? renderEntryEditForm() : `<div class="timeline-content">
         <p title="${escapeAttribute(log.title)}">${escapeHtml(log.title)}</p>
-        <small>${log.sourceTaskId ? "完成待办" : "手动记录"}${log.project ? ` · ${escapeHtml(log.project)}` : ""}</small>
+        <small>${logOriginLabel(log)}${log.project ? ` · ${escapeHtml(log.project)}` : ""}</small>
       </div>
       ${renderItemActions(log, "log")}`}`;
     fragment.append(item);
@@ -2913,6 +3153,35 @@ elements.dailyNote.addEventListener("input", () => {
 
 elements.generateReview.addEventListener("click", generateReview);
 elements.saveReview.addEventListener("click", completeReview);
+elements.agentDigestEnabled.addEventListener("change", toggleAgentDigest);
+elements.agentDigestSave.addEventListener("click", saveAgentDigestSettings);
+elements.agentDigestRefresh.addEventListener("click", async () => {
+  try {
+    await loadAgentDigest();
+    await reloadIfServerChanged();
+    elements.agentDigestState.textContent = "状态已刷新";
+  } catch (error) {
+    showToast(`刷新失败：${error.message}`);
+  }
+});
+elements.agentDigestDays.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-digest-run]");
+  if (button) runAgentDigest(button.dataset.digestRun);
+});
+elements.agentDigestClear.addEventListener("click", clearAgentTurns);
+elements.agentTokenForm.addEventListener("submit", createAgentToken);
+elements.agentTokenCopy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(elements.agentTokenValue.textContent);
+    showToast("令牌已复制");
+  } catch {
+    showToast("复制失败，请手动选择复制");
+  }
+});
+elements.agentTokenList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-token-revoke]");
+  if (button) revokeAgentToken(button.dataset.tokenRevoke, button.dataset.tokenName);
+});
 window.addEventListener("pagehide", flushDeferredSave);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushDeferredSave();

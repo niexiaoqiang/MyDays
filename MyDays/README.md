@@ -100,6 +100,7 @@ PORT=4173 npm start
 - 配置多个 OpenAI 或 Claude 兼容 AI 服务并测试连接
 - API Key 使用 AES-256-GCM 在服务端加密保存
 - 以 JSON 格式导出完整数据备份
+- Agent 工作汇总（可选，默认关闭）：每天自动把 Claude Code、Codex 中完成的工作整理成几条主要工作写入时间线
 - SQLite 服务端持久化与 Docker 数据卷
 - 增量保存：每次只提交发生变化的条目，多个标签页同时使用时互不覆盖对方修改的其他条目
 - 桌面与移动端自适应布局
@@ -120,6 +121,47 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 本地 Docker 默认从 `secrets/mydays_access_password.txt` 读取共享访问密码。修改文件内容后执行 `docker compose up -d` 使新密码生效；密码文件已被 `.gitignore` 排除，不会进入镜像。
 
 本地 Compose 还启用了 `AI_ALLOW_PROXY_FAKE_IP=1`，用于兼容 Clash 等代理把 HTTPS 域名解析到 `198.18.0.0/15` Fake-IP 的情况。该兼容只接受 HTTPS 域名，直接填写 `198.18.x.x` 仍会被拒绝；公网 Compose 默认不开启此选项。
+
+## Agent 工作汇总（可选）
+
+这个功能把你在 AI agent 中完成的工作，每天自动整理成几条「主要工作」写入时间线。它由两部分组成：
+
+- **采集器**：运行在有 agent 的电脑上，读取本机会话文件，只提取你的提问和 agent 每轮的最终答复（不含工具调用和工具输出），隐藏常见形态的密钥后推送给 MyDays。目前支持 Claude Code 和 Codex。
+- **MyDays 服务端**：暂存这些摘录，每天到设定时间（默认 18:30）用你配置的 AI 服务整理成通常 3–5 条记录，带「AI 整理」标记写入当天时间线。当晚的工作会在第二天定稿时补上；服务没运行的日期，启动后自动补跑最近 7 天。
+
+### 开启步骤
+
+1. 在右上角 MY → AI 设置中，先配置一个带 API Key 的 AI 服务。
+2. 在同一页面的「Agent 工作汇总」里打开开关，确认时区和整理时间。
+3. MyDays 和 agent 在同一台电脑时，启动随附的采集器：
+
+   ```bash
+   docker compose --profile agent-digest up -d --build
+   ```
+
+   它默认以只读方式挂载 `~/.claude/projects` 和 `~/.codex/sessions`，令牌由 MyDays 自动发放。目录不在默认位置时，用 `MYDAYS_CLAUDE_DIR`、`MYDAYS_CODEX_DIR` 指定。
+
+4. agent 在另一台电脑上时，在设置页创建一个令牌，然后在那台电脑上运行（需要 Node.js 24）：
+
+   ```bash
+   MYDAYS_URL=https://mydays.example.com MYDAYS_TOKEN=mdk_xxx node collector/collector.mjs
+   ```
+
+接入前可以先看采集规模，这个命令只打印各 agent 的文件数、轮次数和字数，不发送任何内容：
+
+```bash
+node collector/collector.mjs --dry-run
+```
+
+### 需要知道的
+
+- 关闭开关后，服务端拒收素材、不再调用 AI，采集器也不再读取任何会话文件。停止采集器：`docker compose --profile agent-digest down`。
+- 会话摘录在 MyDays 中暂存 30 天，可在设置页一键清除；它们不进入页面的 JSON 导出备份，但包含在 Docker 数据卷备份里。
+- 摘录会发送给你选择的 AI 服务。密钥隐藏基于规则匹配，无法保证覆盖所有敏感内容；可以按目录名排除不想汇总的项目。
+- 汇总条目和普通记录一样可以编辑、删除。编辑过的条目归你所有，之后的重新整理不会覆盖它。
+- 模型开销与当天的对话量成正比，可以在设置页限制每日输入字数，并为这个功能单独选择一个更便宜的 AI 服务。
+- 采集器只在 macOS + Docker Desktop 上验证过。Linux 上需要保证容器用户（uid 1000）能读取会话文件；宿主机上不存在的目录会被 Docker 创建为空目录。
+- 功能按单用户设计：多人共用一个 MyDays 时，汇总会进入同一条时间线。
 
 ## 公网受邀测试部署
 
