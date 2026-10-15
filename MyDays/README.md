@@ -69,7 +69,7 @@ docker compose start
 
 这会在当前目录生成 `mydays-data.tar.gz`。恢复备份会覆盖现有数据库，请先确认数据卷名称和备份文件，再手动执行恢复操作。
 
-页面左下角的“导出数据备份”仍可导出可阅读的 JSON 文件，适合日常留档；Docker 卷备份则适合完整恢复 SQLite。
+页面左下角或右上角 MY 菜单中的“导出备份”可导出可阅读的 JSON 文件，“导入备份”可用它整体替换当前的待办、记录、笔记、复盘和周期汇报（导入前会自动下载一份当前数据）。JSON 备份不包含 AI 服务配置、项目选项和 Agent 工作汇总的设置与素材；需要完整恢复时请使用上面的 Docker 卷备份。
 
 ## 不使用 Docker
 
@@ -99,7 +99,8 @@ PORT=4173 npm start
 - 按周期和项目用 AI 生成客观简洁的工作汇报（周报/月报式文字），可复制使用；「主要成果」列表保持原始记录，AI 不修改
 - 配置多个 OpenAI 或 Claude 兼容 AI 服务并测试连接
 - API Key 使用 AES-256-GCM 在服务端加密保存
-- 以 JSON 格式导出完整数据备份
+- 搜索全部待办、工作记录、笔记、复盘和周期汇报（顶栏搜索按钮或 ⌘K / Ctrl+K）
+- 以 JSON 格式导出完整数据备份，并可从备份文件导入恢复
 - Agent 工作汇总（可选，默认关闭）：每天自动把 Claude Code、Codex 中完成的工作整理成几条主要工作写入时间线
 - SQLite 服务端持久化与 Docker 数据卷
 - 增量保存：每次只提交发生变化的条目，多个标签页同时使用时互不覆盖对方修改的其他条目
@@ -185,5 +186,3 @@ MYDAYS_DOMAIN=mydays.example.com docker compose -f compose.public.yaml up -d --b
 公网 Compose 只有 Caddy 发布主机端口，MyDays 应用容器不直接发布端口。Caddy 会自动申请 HTTPS 证书。访问密码和 AI 主密钥通过 Docker secrets 提供，不要把秘密写入 Compose、镜像、页面或命令历史。
 
 SQLite 数据卷备份与 `mydays_ai_secret.txt` 必须分开且同等安全地保管。丢失 AI 主密钥后，已有 API Key 无法恢复。会话只保存在应用内存中，容器重启后会全部失效。
-
-从旧版升级时，如果服务器数据库为空且当前浏览器中存在 `mydays.v1` 数据，页面会自动将旧记录迁移到 SQLite。迁移完成后不会删除浏览器中的旧数据，以便必要时人工核对。

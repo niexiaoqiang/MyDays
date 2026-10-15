@@ -108,6 +108,16 @@ const elements = {
   reviewState: document.querySelector("#review-state"),
   saveReview: document.querySelector("#save-review"),
   exportButton: document.querySelector("#export-button"),
+  importButton: document.querySelector("#import-button"),
+  searchTrigger: document.querySelector("#search-trigger"),
+  searchShortcut: document.querySelector("#search-shortcut"),
+  searchDialog: document.querySelector("#search-dialog"),
+  searchInput: document.querySelector("#search-input"),
+  searchResults: document.querySelector("#search-results"),
+  searchFooter: document.querySelector("#search-footer"),
+  importFile: document.querySelector("#import-file"),
+  menuExportButton: document.querySelector("#menu-export-button"),
+  menuImportButton: document.querySelector("#menu-import-button"),
   accountMenuButton: document.querySelector("#account-menu-button"),
   accountMenu: document.querySelector("#account-menu"),
   logoutButton: document.querySelector("#logout-button"),
@@ -2906,7 +2916,223 @@ function completeReview() {
   showToast("今天收好了，辛苦了");
 }
 
-function exportData() {
+const SEARCH_RESULT_LIMIT = 50;
+const PERIOD_KEY_PATTERN = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/;
+let searchMatches = [];
+let searchActiveIndex = 0;
+
+// Everything is already in memory, so search runs entirely in the browser over the current state.
+function buildSearchEntries() {
+  const entries = [];
+  const reviewText = (review) => [review?.wins, review?.blockers, review?.next].filter(Boolean).join("\n");
+  for (const task of state.tasks) {
+    entries.push({ kind: task.completed ? "已完成待办" : "待办", date: task.date, title: task.title, text: `${task.title} ${task.project ?? ""}`, project: task.project, target: { route: "/tasks", date: task.date } });
+  }
+  for (const log of state.logs) {
+    if (log.sourceTaskId) continue;
+    entries.push({ kind: log.source === "agent-digest" ? "AI 整理" : "工作记录", date: log.date, title: log.title, text: `${log.title} ${log.project ?? ""}`, project: log.project, target: { route: "/timeline", date: log.date } });
+  }
+  for (const [date, content] of Object.entries(state.notes)) {
+    if (content?.trim()) entries.push({ kind: "笔记", date, title: "临时笔记", text: content, target: { route: "/", date } });
+  }
+  for (const [date, review] of Object.entries(state.reviews)) {
+    const text = reviewText(review);
+    if (text.trim()) entries.push({ kind: "今日复盘", date, title: "今日复盘", text, target: { route: "/review", date } });
+  }
+  const addPeriod = (key, project, kind, text) => {
+    const match = PERIOD_KEY_PATTERN.exec(key);
+    if (!match || !text?.trim()) return;
+    const [, type, start] = match;
+    const heading = formatPeriodHeading(type, fromDateKey(start));
+    entries.push({ kind, date: start, title: project ? `${heading} · ${project}` : heading, text, target: { route: "/summary", period: type, start, project } });
+  };
+  for (const [key, review] of Object.entries(state.periodReviews)) addPeriod(key, "", "周期复盘", reviewText(review));
+  for (const [key, report] of Object.entries(state.periodReports ?? {})) addPeriod(key, "", "周期汇报", report?.content);
+  for (const [key, projects] of Object.entries(state.projectPeriodReviews ?? {})) {
+    for (const [project, review] of Object.entries(projects)) addPeriod(key, project, "周期复盘", reviewText(review));
+  }
+  for (const [key, projects] of Object.entries(state.projectPeriodReports ?? {})) {
+    for (const [project, report] of Object.entries(projects)) addPeriod(key, project, "周期汇报", report?.content);
+  }
+  return entries;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightTerms(text, terms) {
+  const escaped = escapeHtml(text);
+  if (!terms.length) return escaped;
+  const pattern = new RegExp(terms.map((term) => escapeRegExp(escapeHtml(term))).join("|"), "gi");
+  return escaped.replace(pattern, (match) => `<mark>${match}</mark>`);
+}
+
+function searchSnippet(text, terms) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const lower = flat.toLowerCase();
+  const index = Math.max(0, Math.min(...terms.map((term) => {
+    const position = lower.indexOf(term);
+    return position < 0 ? Infinity : position;
+  })));
+  const start = Number.isFinite(index) ? Math.max(0, index - 24) : 0;
+  return `${start > 0 ? "…" : ""}${flat.slice(start, start + 96)}${flat.length > start + 96 ? "…" : ""}`;
+}
+
+function runSearch() {
+  const terms = elements.searchInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) {
+    searchMatches = [];
+    elements.searchResults.innerHTML = "";
+    elements.searchFooter.textContent = "输入关键词开始搜索，多个关键词用空格分隔";
+    return;
+  }
+  const all = buildSearchEntries()
+    .filter((entry) => {
+      const haystack = `${entry.title}\n${entry.text}`.toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || a.kind.localeCompare(b.kind));
+  searchMatches = all.slice(0, SEARCH_RESULT_LIMIT);
+  searchActiveIndex = 0;
+  elements.searchResults.innerHTML = searchMatches.map((entry, index) => {
+    const showSnippet = entry.text.trim() !== entry.title.trim() && !entry.text.startsWith(entry.title);
+    return `
+      <button class="search-result" type="button" role="option" id="search-result-${index}" data-index="${index}" aria-selected="${index === 0}">
+        <span class="search-result-meta"><i>${escapeHtml(entry.kind)}</i>${escapeHtml(entry.date)}${entry.project ? ` · ${escapeHtml(entry.project)}` : ""}</span>
+        <strong>${highlightTerms(entry.title, terms)}</strong>
+        ${showSnippet ? `<small>${highlightTerms(searchSnippet(entry.text, terms), terms)}</small>` : ""}
+      </button>`;
+  }).join("");
+  elements.searchFooter.textContent = all.length
+    ? `共 ${all.length} 条结果${all.length > SEARCH_RESULT_LIMIT ? `，显示最近的 ${SEARCH_RESULT_LIMIT} 条` : ""} · ↑↓ 选择，回车打开`
+    : "没有找到匹配的内容";
+  updateSearchSelection();
+}
+
+function updateSearchSelection() {
+  elements.searchResults.querySelectorAll(".search-result").forEach((item, index) => {
+    const active = index === searchActiveIndex;
+    item.setAttribute("aria-selected", String(active));
+    if (active) item.scrollIntoView({ block: "nearest" });
+  });
+  elements.searchInput.setAttribute("aria-activedescendant", searchMatches.length ? `search-result-${searchActiveIndex}` : "");
+}
+
+function openSearch() {
+  setAccountMenu(false);
+  closeSummaryExportMenu();
+  if (!elements.searchDialog.open) elements.searchDialog.showModal();
+  elements.searchInput.select();
+  runSearch();
+}
+
+function closeSearch() {
+  if (elements.searchDialog.open) elements.searchDialog.close();
+}
+
+function openSearchResult(index) {
+  const entry = searchMatches[index];
+  if (!entry) return;
+  closeSearch();
+  const { target } = entry;
+  clearCapturePolish();
+  if (target.period) {
+    summaryPeriod = target.period;
+    summaryAnchor = fromDateKey(target.start);
+    summaryProject = target.project ?? "";
+  } else {
+    selectedDate = target.date;
+    const selected = fromDateKey(target.date);
+    calendarCursor = new Date(selected.getFullYear(), selected.getMonth(), 1);
+  }
+  navigateTo(target.route);
+}
+
+const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
+const STATE_MAP_KEYS = ["notes", "reviews", "periodReviews", "projectPeriodReviews", "periodReports", "projectPeriodReports"];
+
+// Accepts the export format ({ app: "MyDays", data }) and a bare state object; missing maps become empty so the
+// import replaces everything instead of mixing with current data (the server keeps current maps when a key is absent).
+function parseBackup(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("文件不是有效的 JSON");
+  }
+  const data = parsed?.app === "MyDays" ? parsed.data : parsed;
+  if (!data || typeof data !== "object" || !Array.isArray(data.tasks) || !Array.isArray(data.logs)) {
+    throw new Error("文件不是 MyDays 导出的数据备份");
+  }
+  const normalized = { tasks: data.tasks, logs: data.logs };
+  for (const key of STATE_MAP_KEYS) {
+    normalized[key] = data[key] && typeof data[key] === "object" && !Array.isArray(data[key]) ? data[key] : {};
+  }
+  return { data: normalized, exportedAt: typeof parsed?.exportedAt === "string" ? parsed.exportedAt : null };
+}
+
+function describeBackup(data) {
+  const filled = (map) => Object.values(map).filter((value) => (typeof value === "string" ? value.trim() : value)).length;
+  return [
+    `${data.tasks.length} 条待办`,
+    `${data.logs.length} 条工作记录`,
+    `${filled(data.notes)} 天笔记`,
+    `${filled(data.reviews)} 天复盘`,
+    `${Object.keys(data.periodReviews).length + Object.keys(data.periodReports).length} 份周期复盘与汇报`,
+  ].join("、");
+}
+
+async function waitForPendingSaves() {
+  if (deferredSave) queueSave({ onSaved: deferredSave.onSaved, onError: deferredSave.onError });
+  await saveQueue.catch(() => {});
+}
+
+async function importBackupFile(file) {
+  if (!file) return;
+  if (file.size > MAX_IMPORT_FILE_BYTES) {
+    showToast("备份文件超过 20 MB，无法导入");
+    return;
+  }
+  let backup;
+  try {
+    backup = parseBackup(await file.text());
+  } catch (error) {
+    showToast(`导入失败：${error.message}`);
+    return;
+  }
+  const exportedAt = backup.exportedAt ? `（导出于 ${formatDateTime(backup.exportedAt)}）` : "";
+  const confirmed = window.confirm([
+    `导入「${file.name}」${exportedAt}？`,
+    "",
+    `其中包含：${describeBackup(backup.data)}。`,
+    "",
+    "导入会替换当前全部待办、记录、笔记、复盘和周期汇报；AI 设置、项目选项和 Agent 工作汇总设置不受影响。",
+    "导入前会先自动下载一份当前数据的备份。",
+  ].join("\n"));
+  if (!confirmed) return;
+  try {
+    await waitForPendingSaves();
+    exportData({ silent: true, filename: `mydays-before-import-${toDateKey(new Date())}.json` });
+    const result = await requestJson("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ data: backup.data, revision }),
+    });
+    entryEdit = null;
+    adoptServerState(result);
+    render();
+    showToast("备份已导入，导入前的数据已下载保存");
+  } catch (error) {
+    if (error.code === "STATE_CONFLICT") {
+      await mergeServerState().catch(() => {});
+      showToast("数据刚被其他页面更新，请重新导入一次");
+      return;
+    }
+    showToast(`导入失败：${error.message}`);
+  }
+}
+
+function exportData({ silent = false, filename = null } = {}) {
   const content = JSON.stringify(
     {
       app: "MyDays",
@@ -2920,9 +3146,9 @@ function exportData() {
   );
   downloadBlob(
     new Blob([content], { type: "application/json" }),
-    `mydays-backup-${toDateKey(new Date())}.json`,
+    filename ?? `mydays-backup-${toDateKey(new Date())}.json`,
   );
-  showToast("数据备份已导出");
+  if (!silent) showToast("数据备份已导出");
 }
 
 elements.captureTabs.forEach((tab) => tab.addEventListener("click", () => setCaptureType(tab.dataset.type)));
@@ -3144,7 +3370,40 @@ window.addEventListener("pagehide", flushDeferredSave);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushDeferredSave();
 });
-elements.exportButton.addEventListener("click", exportData);
+elements.exportButton.addEventListener("click", () => exportData());
+elements.menuExportButton.addEventListener("click", () => {
+  setAccountMenu(false);
+  exportData();
+});
+const chooseBackupFile = () => {
+  setAccountMenu(false);
+  elements.importFile.value = "";
+  elements.importFile.click();
+};
+elements.importButton.addEventListener("click", chooseBackupFile);
+elements.menuImportButton.addEventListener("click", chooseBackupFile);
+elements.importFile.addEventListener("change", () => importBackupFile(elements.importFile.files[0]));
+if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) elements.searchShortcut.textContent = "Ctrl K";
+elements.searchTrigger.addEventListener("click", openSearch);
+elements.searchInput.addEventListener("input", runSearch);
+elements.searchInput.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (!searchMatches.length) return;
+    searchActiveIndex = (searchActiveIndex + (event.key === "ArrowDown" ? 1 : -1) + searchMatches.length) % searchMatches.length;
+    updateSearchSelection();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    openSearchResult(searchActiveIndex);
+  }
+});
+elements.searchResults.addEventListener("click", (event) => {
+  const item = event.target.closest(".search-result");
+  if (item) openSearchResult(Number(item.dataset.index));
+});
+elements.searchDialog.addEventListener("click", (event) => {
+  if (event.target === elements.searchDialog) closeSearch();
+});
 elements.accountMenuButton.addEventListener("click", () => setAccountMenu(elements.accountMenu.hidden));
 elements.themeOptions.forEach((option) => option.addEventListener("click", () => {
   window.MyDaysTheme?.set(option.dataset.themeOption);
@@ -3370,6 +3629,12 @@ document.addEventListener("keydown", (event) => {
   }
   const target = event.target;
   const isTyping = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (elements.searchDialog.open) closeSearch();
+    else openSearch();
+    return;
+  }
   if (event.key === "/" && !isTyping) {
     event.preventDefault();
     if (["review", "summary", "ai-settings"].includes(currentRoute.key)) navigateTo("/tasks");
