@@ -7,4 +7,3 @@ compose.yaml
 tests
 data
 secrets
-nginx.conf

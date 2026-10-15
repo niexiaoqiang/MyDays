@@ -231,30 +231,6 @@ async function waitForApp() {
     });
     assert.equal(result.response.status, 200);
 
-    result = await request("/api/ai/period-summary", {
-      method: "POST",
-      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "MyDays" }),
-    });
-    assert.equal(result.response.status, 200);
-    assert.deepEqual(result.body.summary, {
-      wins: "完成了登录体验优化",
-      blockers: "模型获取流程需要继续观察",
-      next: "完善 AI 总结回归测试",
-    });
-    assert.equal(result.body.provider, "Local OpenAI");
-    assert.equal(result.body.model, "test-openai");
-    assert.equal(JSON.stringify(result.body).includes(openaiKey), false, "AI 总结不得回传 OpenAI Key");
-    const openaiSummaryRequest = requests.find((entry) => entry.url === "/openai/v1/chat/completions"
-      && entry.body.messages.some((message) => String(message.content).includes("周期数据：")));
-    assert.equal(openaiSummaryRequest.headers.authorization, `Bearer ${openaiKey}`);
-    assert.equal(openaiSummaryRequest.body.model, "test-openai");
-    assert.equal(openaiSummaryRequest.body.stream, false);
-    assert.equal(JSON.stringify(openaiSummaryRequest.body).includes("完成登录体验优化"), true);
-    assert.equal(JSON.stringify(openaiSummaryRequest.body).includes("突出项目价值与下周风险。"), true);
-    assert.equal(openaiSummaryRequest.body.messages.some((message) => String(message.content).includes('"project":"MyDays"')), true);
-    let persistedState = await request("/api/state");
-    assert.deepEqual(persistedState.body.data.periodReviews, {}, "AI 生成结果不得自动保存到 SQLite");
-
     result = await request("/api/ai/period-report", {
       method: "POST",
       body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "MyDays" }),
@@ -271,7 +247,10 @@ async function waitForApp() {
     assert.equal(openaiReportRequest.body.model, "test-openai");
     assert.equal(openaiReportRequest.body.stream, false);
     assert.equal(JSON.stringify(openaiReportRequest.body).includes("完成登录体验优化"), true);
-    persistedState = await request("/api/state");
+    assert.equal(JSON.stringify(openaiReportRequest.body).includes("突出项目价值与下周风险。"), true, "汇报提示词必须包含用户的总结偏好");
+    assert.equal(openaiReportRequest.body.messages.some((message) => String(message.content).includes('"project":"MyDays"')), true);
+    let persistedState = await request("/api/state");
+    assert.deepEqual(persistedState.body.data.periodReviews, {}, "AI 生成结果不得自动保存周期复盘");
     assert.deepEqual(persistedState.body.data.periodReports, {}, "AI 汇报生成结果不得自动保存到 SQLite");
 
     result = await request("/api/ai/period-report", {
@@ -293,24 +272,6 @@ async function waitForApp() {
     assert.equal(result.response.status, 400);
     assert.equal(result.body.error.code, "AI_SUMMARY_EMPTY");
 
-    result = await request("/api/ai/period-summary", {
-      method: "POST",
-      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-11" }),
-    });
-    assert.equal(result.response.status, 400);
-    assert.equal(result.body.error.code, "AI_SUMMARY_INVALID");
-    result = await request("/api/ai/period-summary", {
-      method: "POST",
-      body: JSON.stringify({ periodType: "month", periodStart: "2025-01-01" }),
-    });
-    assert.equal(result.response.status, 400);
-    assert.equal(result.body.error.code, "AI_SUMMARY_EMPTY");
-    result = await request("/api/ai/period-summary", {
-      method: "POST",
-      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "不存在项目" }),
-    });
-    assert.equal(result.response.status, 400);
-    assert.equal(result.body.error.code, "AI_SUMMARY_EMPTY");
     result = await request("/api/ai/summary-settings", { method: "DELETE" });
     assert.equal(result.body.isCustom, false);
     assert.equal(result.body.promptExcerpt, defaultSummaryPrompt);
@@ -364,26 +325,6 @@ async function waitForApp() {
     assert.equal(result.body.defaultProviderId, anthropicId);
     assert.equal(result.body.providers.filter((provider) => provider.isDefault).length, 1);
 
-    result = await request("/api/ai/period-summary", {
-      method: "POST",
-      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }),
-    });
-    assert.equal(result.response.status, 200);
-    assert.deepEqual(result.body.summary, {
-      wins: "Claude 整理的成果",
-      blockers: "Claude 整理的反思",
-      next: "Claude 整理的下一步",
-    });
-    assert.equal(result.body.provider, "Local Claude");
-    assert.equal(result.body.model, "test-claude");
-    assert.equal(JSON.stringify(result.body).includes(anthropicKey), false, "AI 总结不得回传 Anthropic Key");
-    const claudeSummaryRequest = requests.find((entry) => entry.url === "/claude/messages"
-      && entry.body.messages.some((message) => String(message.content).includes("周期数据：")));
-    assert.equal(claudeSummaryRequest.headers["x-api-key"], anthropicKey);
-    assert.equal(claudeSummaryRequest.headers["anthropic-version"], "2023-06-01");
-    assert.equal(claudeSummaryRequest.body.model, "test-claude");
-    assert.equal(claudeSummaryRequest.body.stream, false);
-
     result = await request("/api/ai/period-report", {
       method: "POST",
       body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }),
@@ -427,14 +368,8 @@ async function waitForApp() {
     });
     const invalidId = result.body.provider.id;
     await request(`/api/ai/providers/${invalidId}/default`, { method: "POST" });
-    result = await request("/api/ai/period-summary", {
-      method: "POST",
-      body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }),
-    });
-    assert.equal(result.response.status, 502);
-    assert.equal(result.body.error.code, "AI_RESPONSE_INVALID");
-    assert.equal(JSON.stringify(result.body).includes("not-json-upstream-secret"), false, "非法上游正文不得透传");
-    assert.equal(JSON.stringify(result.body).includes(invalidKey), false, "非法响应不得泄露 Key");
+    result = await request("/api/ai/period-summary", { method: "POST", body: JSON.stringify({ periodType: "week", periodStart: "2026-08-10" }) });
+    assert.equal(result.response.status, 404, "已移除的周期结构化总结接口不得再响应");
 
     result = await request("/api/ai/polish-entry", {
       method: "POST",

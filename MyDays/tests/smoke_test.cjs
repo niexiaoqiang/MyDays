@@ -57,12 +57,14 @@ function readStoredZipEntries(buffer) {
   await page.goto(baseUrl);
   await page.waitForLoadState("networkidle");
   const initialState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (!initialState.empty || !initialState.migrationAllowed) {
+  if (!initialState.empty || initialState.revision !== 0) {
     throw new Error("浏览器测试必须使用全新的隔离 SQLite 数据库");
   }
-  await page.evaluate(() => {
-    localStorage.clear();
-    localStorage.setItem("mydays.v1", JSON.stringify({
+  // Seed the isolated database through the same whole-state endpoint that backup import uses.
+  await page.evaluate(() => fetch("/api/state", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: 0, data: {
       tasks: [{
         id: "browser-legacy-task",
         date: "2026-08-12",
@@ -76,8 +78,8 @@ function readStoredZipEntries(buffer) {
       logs: [],
       notes: { "2026-08-12": "从 localStorage 迁移的笔记" },
       reviews: {},
-    }));
-  });
+    } }),
+  }).then((response) => { if (!response.ok) throw new Error(`seed failed: ${response.status}`); }));
   await page.reload();
   await page.waitForLoadState("networkidle");
 
@@ -94,10 +96,8 @@ function readStoredZipEntries(buffer) {
     throw new Error("工作台初始摘要不正确");
   }
   if ((await page.getByLabel("临时笔记").inputValue()) !== "从 localStorage 迁移的笔记") {
-    throw new Error("旧版 localStorage 笔记迁移失败");
+    throw new Error("种子数据中的临时笔记没有显示");
   }
-  const migrationMarker = await page.evaluate(() => localStorage.getItem("mydays.v1.sqlite-migrated"));
-  if (!migrationMarker) throw new Error("旧版迁移完成标记不存在");
 
   await page.locator("#date-picker-button").click();
   if (!(await page.locator("#calendar-popover").isVisible())) throw new Error("日期选择器没有打开");
@@ -405,7 +405,7 @@ function readStoredZipEntries(buffer) {
   if (!(await page.locator("#review-state").innerText()).includes("已于")) throw new Error("复盘状态不正确");
   const savedDailyReview = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
   if (savedDailyReview.data.reviews["2026-08-12"]?.blockers !== "今日综合复盘问题") throw new Error("今日综合复盘没有保存");
-  if (Object.keys(savedDailyReview.data.projectReviews).length) throw new Error("今日复盘不应再写入项目分类数据");
+  if ("projectReviews" in savedDailyReview.data) throw new Error("项目每日复盘已移除，不应再出现在状态中");
 
   await page.getByRole("link", { name: "周期汇总" }).click();
   if (new URL(page.url()).pathname !== "/summary") throw new Error("周期汇总页面 URL 不正确");

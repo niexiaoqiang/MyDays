@@ -1,5 +1,3 @@
-const STORAGE_KEY = "mydays.v1";
-const MIGRATION_KEY = "mydays.v1.sqlite-migrated";
 const MAX_PATCH_OPS = 500;
 const MAX_KEEPALIVE_BODY_BYTES = 60000;
 const ROUTES = Object.freeze({
@@ -221,7 +219,6 @@ const defaultState = {
   notes: {},
   reviews: {},
   periodReviews: {},
-  projectReviews: {},
   projectPeriodReviews: {},
   periodReports: {},
   projectPeriodReports: {},
@@ -514,24 +511,6 @@ function moveSummaryExportFocus(offset) {
   elements.summaryExportItems[nextIndex]?.focus();
 }
 
-function loadLegacyState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!saved) return null;
-    return {
-      tasks: Array.isArray(saved?.tasks) ? saved.tasks : [],
-      logs: Array.isArray(saved?.logs) ? saved.logs : [],
-      notes: saved?.notes && typeof saved.notes === "object" ? saved.notes : {},
-      reviews: saved?.reviews && typeof saved.reviews === "object" ? saved.reviews : {},
-      periodReviews: {},
-      projectReviews: {},
-      projectPeriodReviews: {},
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -660,7 +639,6 @@ function diffState(base, next) {
     ...diffMap(base.periodReports, next.periodReports, normalizeReport,
       (key, report) => ({ op: "periodReport.put", key, report }),
       (key) => ({ op: "periodReport.delete", key })),
-    ...diffProjectMap(base.projectReviews, next.projectReviews, normalizeReview, "projectReview", "date", "review"),
     ...diffProjectMap(base.projectPeriodReviews, next.projectPeriodReviews, normalizeReview, "projectPeriodReview", "key", "review"),
     ...diffProjectMap(base.projectPeriodReports, next.projectPeriodReports, normalizeReport, "projectPeriodReport", "key", "report"),
   ];
@@ -694,8 +672,6 @@ function applyOps(data, ops) {
       case "periodReview.delete": delete data.periodReviews[op.key]; break;
       case "periodReport.put": data.periodReports[op.key] = op.report; break;
       case "periodReport.delete": delete data.periodReports[op.key]; break;
-      case "projectReview.put": putProjectValue("projectReviews", op.date, op.project, op.review); break;
-      case "projectReview.delete": deleteProjectValue("projectReviews", op.date, op.project); break;
       case "projectPeriodReview.put": putProjectValue("projectPeriodReviews", op.key, op.project, op.review); break;
       case "projectPeriodReview.delete": deleteProjectValue("projectPeriodReviews", op.key, op.project); break;
       case "projectPeriodReport.put": putProjectValue("projectPeriodReports", op.key, op.project, op.report); break;
@@ -818,25 +794,7 @@ async function bootstrap() {
     const auth = await requestJson("/api/auth/status");
     elements.accountMenuButton.hidden = false;
     elements.logoutButton.hidden = !auth.enabled;
-    let result = await requestJson("/api/state");
-    const legacyState = localStorage.getItem(MIGRATION_KEY) ? null : loadLegacyState();
-
-    if (result.migrationAllowed && legacyState) {
-      try {
-        const migration = await requestJson("/api/migrate", {
-          method: "POST",
-          body: JSON.stringify({ data: legacyState }),
-        });
-        localStorage.setItem(MIGRATION_KEY, new Date().toISOString());
-        result = migration;
-        if (migration.migrated) showToast("旧版浏览器数据已迁移到 SQLite");
-      } catch (migrationError) {
-        localStorage.setItem(MIGRATION_KEY, `failed:${new Date().toISOString()}`);
-        showToast(`旧数据迁移失败，已保留浏览器备份：${migrationError.message}`);
-      }
-    }
-
-    adoptServerState(result);
+    adoptServerState(await requestJson("/api/state"));
     try {
       await Promise.all([loadAiProviders(), loadAiSummarySettings(), loadProjectOptions()]);
       await loadAgentDigest().catch((digestError) => {

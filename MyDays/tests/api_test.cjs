@@ -23,12 +23,11 @@ const emptyState = {
   notes: {},
   reviews: {},
   periodReviews: {},
-  projectReviews: {},
   projectPeriodReviews: {},
   periodReports: {},
   projectPeriodReports: {},
 };
-const legacyState = {
+const seedState = {
   tasks: [{
     id: "legacy-task",
     date: "2026-08-12",
@@ -40,10 +39,11 @@ const legacyState = {
   }],
   logs: [],
   notes: { "2026-08-12": "旧版笔记" },
-    reviews: {},
-    periodReviews: {},
-    projectReviews: {},
-    projectPeriodReviews: {},
+  reviews: {},
+  periodReviews: {},
+  projectPeriodReviews: {},
+  periodReports: {},
+  projectPeriodReports: {},
 };
 
 async function jsonRequest(url, options = {}) {
@@ -119,17 +119,17 @@ async function waitForServer() {
     let result = await jsonRequest("/api/state");
     assert.equal(result.response.status, 200);
     assert.equal(result.body.empty, true);
-    assert.equal(result.body.migrationAllowed, true);
+    assert.equal("migrationAllowed" in result.body, false, "旧版浏览器数据迁移已移除");
     assert.deepEqual(result.body.data, emptyState);
     assert.equal(result.body.revision, 0);
+    assert.equal((await jsonRequest("/api/migrate", { method: "POST", body: JSON.stringify({ data: seedState }) })).response.status, 404);
 
-    result = await jsonRequest("/api/migrate", {
-      method: "POST",
-      body: JSON.stringify({ data: legacyState }),
+    result = await jsonRequest("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ data: { ...seedState, projectReviews: { "2026-08-12": { 工作: { wins: "旧备份里的项目每日复盘" } } } }, revision: 0 }),
     });
     assert.equal(result.response.status, 200);
-    assert.equal(result.body.migrated, true);
-    assert.equal(result.body.migrationAllowed, false);
+    assert.equal("projectReviews" in result.body.data, false, "旧备份中的项目每日复盘应被忽略");
     assert.equal(result.body.data.tasks[0].title, "迁移旧待办");
     assert.equal(result.body.data.notes["2026-08-12"], "旧版笔记");
 
@@ -183,12 +183,8 @@ async function waitForServer() {
     assert.equal(historyState.body.data.tasks[0].project, "工作", "删除选项不得改写历史任务");
     assert.equal(projectsResult.body.projects.includes("核心工作"), false);
 
-    result = await jsonRequest("/api/migrate", {
-      method: "POST",
-      body: JSON.stringify({ data: emptyState }),
-    });
+    result = await jsonRequest("/api/state");
     assert.equal(result.response.status, 200);
-    assert.equal(result.body.migrated, false);
     assert.equal(result.body.data.tasks[0].title, "迁移旧待办");
 
     const currentRevision = result.body.revision;
@@ -212,9 +208,6 @@ async function waitForServer() {
     updatedState.periodReviews["month:2026-08-01"] = { wins: "月度成果", blockers: "", next: "下月重点", completedAt: null };
     updatedState.periodReviews["quarter:2026-07-01"] = { wins: "季度成果", blockers: "", next: "下季度重点", completedAt: null };
     updatedState.periodReviews["year:2026-01-01"] = { wins: "年度成果", blockers: "", next: "明年重点", completedAt: null };
-    updatedState.projectReviews["2026-08-12"] = {
-      工作: { wins: "工作项目成果", blockers: "工作项目问题", next: "工作项目下一步", completedAt: null },
-    };
     updatedState.projectPeriodReviews["week:2026-08-10"] = {
       工作: { wins: "工作项目周成果", blockers: "", next: "工作项目下周重点", completedAt: null },
     };
@@ -236,7 +229,6 @@ async function waitForServer() {
     assert.equal(result.body.data.periodReviews["month:2026-08-01"].wins, "月度成果");
     assert.equal(result.body.data.periodReviews["quarter:2026-07-01"].wins, "季度成果");
     assert.equal(result.body.data.periodReviews["year:2026-01-01"].wins, "年度成果");
-    assert.equal(result.body.data.projectReviews["2026-08-12"].工作.wins, "工作项目成果");
     assert.equal(result.body.data.projectPeriodReviews["week:2026-08-10"].工作.wins, "工作项目周成果");
     assert.equal(result.body.data.periodReports["week:2026-08-10"].content, "本周汇报：完成登录体验优化。");
     assert.equal(result.body.data.periodReports["month:2026-08-01"].content, "月度汇报初稿");
@@ -245,7 +237,6 @@ async function waitForServer() {
     const modernRevision = result.body.revision;
     const oldClientState = structuredClone(result.body.data);
     delete oldClientState.periodReviews;
-    delete oldClientState.projectReviews;
     delete oldClientState.projectPeriodReviews;
     delete oldClientState.periodReports;
     delete oldClientState.projectPeriodReports;
@@ -260,7 +251,6 @@ async function waitForServer() {
       "完成周期汇总存储",
       "旧客户端请求不得覆盖周期复盘",
     );
-    assert.equal(result.body.data.projectReviews["2026-08-12"].工作.wins, "工作项目成果", "旧客户端不得覆盖项目每日复盘");
     assert.equal(
       result.body.data.projectPeriodReviews["week:2026-08-10"].工作.wins,
       "工作项目周成果",
@@ -318,7 +308,6 @@ async function waitForServer() {
     assert.equal(result.body.data.tasks[0].completed, true, "失败写入不得改变数据库");
     assert.equal(result.body.data.logs.length, 1);
     assert.equal(result.body.data.periodReviews["week:2026-08-10"].next, "完成浏览器回归测试");
-    assert.equal(result.body.migrationAllowed, false);
     assert.equal(fs.existsSync(path.join(tempDir, "mydays.db")), true);
 
     const clearResult = await jsonRequest("/api/state", {
@@ -327,15 +316,6 @@ async function waitForServer() {
     });
     assert.equal(clearResult.response.status, 200);
     assert.equal(clearResult.body.empty, true);
-    assert.equal(clearResult.body.migrationAllowed, false);
-
-    const remigrationResult = await jsonRequest("/api/migrate", {
-      method: "POST",
-      body: JSON.stringify({ data: legacyState }),
-    });
-    assert.equal(remigrationResult.response.status, 200);
-    assert.equal(remigrationResult.body.migrated, false);
-    assert.deepEqual(remigrationResult.body.data, emptyState, "删空后不得重复导入旧浏览器数据");
 
     let sourceState = (await jsonRequest("/api/state")).body;
     const sourcedLog = { id: "sourced-log", date: "2026-08-12", title: "AI 整理的记录", project: "", sourceTaskId: null, source: "agent-digest", createdAt: "2026-08-12T09:00:00.000Z" };

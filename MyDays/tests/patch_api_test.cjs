@@ -74,7 +74,6 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
 
     let state = await readServerState();
     assert.equal(state.revision, 0);
-    assert.equal(state.migrationAllowed, true);
 
     let result = await patch(0, [
       { op: "task.put", task: task("t1") },
@@ -84,7 +83,6 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
       { op: "note.put", date: "2026-10-12", content: "第一天笔记" },
       { op: "note.put", date: "2026-10-13", content: "第二天笔记" },
       { op: "review.put", date: "2026-10-12", review: review("每日成果") },
-      { op: "projectReview.put", date: "2026-10-12", project: "工作", review: review("项目每日成果") },
       { op: "periodReview.put", key: "week:2026-10-12", review: review("周成果") },
       { op: "projectPeriodReview.put", key: "week:2026-10-12", project: "工作", review: review("项目周成果") },
       { op: "periodReport.put", key: "month:2026-10-01", report: { content: "月度汇报" } },
@@ -95,13 +93,11 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
 
     state = await readServerState();
     assert.equal(state.revision, 1);
-    assert.equal(state.migrationAllowed, false, "增量写入后不得再允许旧数据迁移");
     assert.deepEqual(state.data.tasks.map((entry) => entry.id).sort(), ["t1", "t2"]);
     assert.equal(state.data.tasks.find((entry) => entry.id === "t2").completed, true);
     assert.equal(state.data.logs.find((entry) => entry.id === "l2").sourceTaskId, "t2");
     assert.equal(state.data.notes["2026-10-13"], "第二天笔记");
     assert.equal(state.data.reviews["2026-10-12"].wins, "每日成果");
-    assert.equal(state.data.projectReviews["2026-10-12"].工作.wins, "项目每日成果");
     assert.equal(state.data.periodReviews["week:2026-10-12"].wins, "周成果");
     assert.equal(state.data.projectPeriodReviews["week:2026-10-12"].工作.wins, "项目周成果");
     assert.equal(state.data.periodReports["month:2026-10-01"].content, "月度汇报");
@@ -155,6 +151,7 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
       [{ baseRevision: 3, ops: [] }, "INVALID_PATCH"],
       [{ baseRevision: 3, ops: Array.from({ length: 501 }, (_, index) => ({ op: "task.delete", id: `x${index}` })) }, "INVALID_PATCH"],
       [{ baseRevision: 3, ops: [{ op: "task.replace", task: task("t9") }] }, "INVALID_PATCH"],
+      [{ baseRevision: 3, ops: [{ op: "projectReview.put", date: "2026-10-12", project: "工作", review: review("已移除") }] }, "INVALID_PATCH"],
       [{ baseRevision: 3, ops: [{ op: "__proto__" }] }, "INVALID_PATCH"],
       [{ baseRevision: 3, ops: "nope" }, "INVALID_PATCH"],
       [{ baseRevision: -1, ops: [{ op: "task.delete", id: "t1" }] }, "INVALID_REVISION"],
@@ -172,7 +169,6 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
       { op: "task.delete", id: "never-existed" },
       { op: "note.delete", date: "2026-10-12" },
       { op: "review.delete", date: "2026-10-12" },
-      { op: "projectReview.delete", date: "2026-10-12", project: "工作" },
       { op: "periodReview.delete", key: "week:2026-10-12" },
       { op: "projectPeriodReview.delete", key: "week:2026-10-12", project: "工作" },
       { op: "periodReport.delete", key: "month:2026-10-01" },
@@ -183,7 +179,7 @@ const review = (wins) => ({ wins, blockers: "", next: "", completedAt: null });
     assert.deepEqual(state.data.tasks.map((entry) => entry.id).sort(), ["t1", "t3"]);
     assert.deepEqual(state.data.logs, [], "删除待办必须级联删除其自动记录");
     assert.deepEqual(Object.keys(state.data.notes), ["2026-10-13"]);
-    for (const key of ["reviews", "projectReviews", "periodReviews", "projectPeriodReviews", "periodReports", "projectPeriodReports"]) {
+    for (const key of ["reviews", "periodReviews", "projectPeriodReviews", "periodReports", "projectPeriodReports"]) {
       assert.deepEqual(state.data[key], {}, `${key} 应已删除`);
     }
 

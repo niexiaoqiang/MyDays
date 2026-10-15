@@ -11,6 +11,8 @@ const PORT = Number.parseInt(process.env.PORT ?? "3000", 10);
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "data");
 const DATABASE_PATH = process.env.DATABASE_PATH ?? path.join(DATA_DIR, "mydays.db");
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+// Whole-state replacement is used for restoring backups, which can be much larger than incremental saves.
+const MAX_STATE_BODY_BYTES = 20 * 1024 * 1024;
 const MAX_PATCH_OPS = 500;
 const AGENT_TURN_WINDOW_DAYS = 8;
 const AGENT_TURN_RETENTION_DAYS = 30;
@@ -24,7 +26,6 @@ const AGENT_DIGEST_MAX_ATTEMPTS = 3;
 const AGENT_DIGEST_RETRY_MS = 60 * 60 * 1000;
 const AGENT_DIGEST_CHECK_SECONDS = Math.max(1, Number.parseInt(process.env.AGENT_DIGEST_CHECK_SECONDS ?? "300", 10) || 300);
 const MAX_AI_RESPONSE_BYTES = 512 * 1024;
-const MAX_AI_SUMMARY_FIELD_LENGTH = 4000;
 const MAX_AI_SUMMARY_ITEMS = 120;
 const MAX_AI_REPORT_LENGTH = 8000;
 const MAX_REPORT_CONTENT_LENGTH = 20000;
@@ -112,7 +113,6 @@ const EMPTY_STATE = Object.freeze({
   notes: {},
   reviews: {},
   periodReviews: {},
-  projectReviews: {},
   projectPeriodReviews: {},
 });
 
@@ -456,8 +456,6 @@ try {
 const statements = {
   getRevision: database.prepare("SELECT value FROM metadata WHERE key = 'revision'"),
   setRevision: database.prepare("UPDATE metadata SET value = ? WHERE key = 'revision'"),
-  getMigrationCompleted: database.prepare("SELECT value FROM metadata WHERE key = 'legacy_migration_completed'"),
-  completeMigration: database.prepare("UPDATE metadata SET value = '1' WHERE key = 'legacy_migration_completed'"),
   countData: database.prepare(`
     SELECT
       (SELECT COUNT(*) FROM tasks) +
@@ -465,7 +463,6 @@ const statements = {
       (SELECT COUNT(*) FROM notes) +
       (SELECT COUNT(*) FROM reviews) +
       (SELECT COUNT(*) FROM period_reviews) +
-      (SELECT COUNT(*) FROM project_reviews) +
       (SELECT COUNT(*) FROM project_period_reviews) +
       (SELECT COUNT(*) FROM period_reports) +
       (SELECT COUNT(*) FROM project_period_reports) AS count
@@ -486,10 +483,6 @@ const statements = {
   readPeriodReviews: database.prepare(`
     SELECT period_type, period_start, wins, blockers, next_actions, completed_at
     FROM period_reviews ORDER BY period_start ASC, period_type ASC
-  `),
-  readProjectReviews: database.prepare(`
-    SELECT work_date, project, wins, blockers, next_actions, completed_at
-    FROM project_reviews ORDER BY work_date ASC, project ASC
   `),
   readProjectPeriodReviews: database.prepare(`
     SELECT period_type, period_start, project, wins, blockers, next_actions, completed_at
@@ -514,10 +507,6 @@ const statements = {
     INSERT INTO period_reviews(
       period_type, period_start, wins, blockers, next_actions, completed_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `),
-  insertProjectReview: database.prepare(`
-    INSERT INTO project_reviews(work_date, project, wins, blockers, next_actions, completed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
   insertProjectPeriodReview: database.prepare(`
     INSERT INTO project_period_reviews(
@@ -571,13 +560,6 @@ const statements = {
       next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
   `),
   deleteReview: database.prepare("DELETE FROM reviews WHERE work_date = ?"),
-  upsertProjectReview: database.prepare(`
-    INSERT INTO project_reviews(work_date, project, wins, blockers, next_actions, completed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(work_date, project) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
-      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
-  `),
-  deleteProjectReview: database.prepare("DELETE FROM project_reviews WHERE work_date = ? AND project = ?"),
   upsertPeriodReview: database.prepare(`
     INSERT INTO period_reviews(period_type, period_start, wins, blockers, next_actions, completed_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1314,13 +1296,10 @@ function buildPeriodSummarySnapshot(periodType, periodStart, project = null) {
     ...(!project ? Object.entries(data.notes)
       .filter(([date, content]) => date >= periodStart && date <= periodEnd && content.trim())
       .map(([date]) => date) : []),
-    ...(!project ? Object.entries(data.reviews) : Object.entries(data.projectReviews))
-      .filter(([date, reviewValue]) => {
-        const review = project ? reviewValue[project] : reviewValue;
-        return date >= periodStart && date <= periodEnd
-          && review && [review.wins, review.blockers, review.next].some((value) => value?.trim());
-      })
-      .map(([date]) => date),
+    ...(!project ? Object.entries(data.reviews)
+      .filter(([date, review]) => date >= periodStart && date <= periodEnd
+        && [review.wins, review.blockers, review.next].some((value) => value?.trim()))
+      .map(([date]) => date) : []),
   ]);
   const projects = new Map();
   for (const item of [...tasks, ...manualLogs]) {
@@ -1375,38 +1354,6 @@ function extractAiText(protocol, result) {
     : result?.content?.find?.((item) => item?.type === "text")?.text;
 }
 
-function parsePeriodSummaryText(text, forbiddenValues = []) {
-  if (typeof text !== "string") throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务响应缺少总结文本");
-  let normalized = text.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(normalized);
-  if (fenced) normalized = fenced[1].trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(normalized);
-  } catch {
-    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务没有返回有效的结构化总结");
-  }
-  if (!isPlainObject(parsed)) throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的总结结构无效");
-  const summary = {};
-  for (const field of ["wins", "blockers", "next"]) {
-    if (typeof parsed[field] !== "string") {
-      throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的总结字段不完整");
-    }
-    const value = parsed[field].trim();
-    if (value.length > MAX_AI_SUMMARY_FIELD_LENGTH) {
-      throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的总结内容过长");
-    }
-    if (forbiddenValues.some((secret) => secret && value.includes(secret))) {
-      throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的总结包含敏感内容");
-    }
-    summary[field] = value;
-  }
-  if (!summary.wins && !summary.blockers && !summary.next) {
-    throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回了空总结");
-  }
-  return summary;
-}
-
 function parsePeriodReportText(text, forbiddenValues = []) {
   if (typeof text !== "string") throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务响应缺少汇报文本");
   let normalized = text.trim();
@@ -1431,18 +1378,6 @@ function periodReportPrompt(snapshot, promptExcerpt) {
     "要求：客观、真实、简洁明了；可以稍加修饰，但不要空话套话、不要夸张措辞、不要明显的 AI 腔。",
     "结构建议：先用一两句话概述本周期情况（可包含完成事项数、活跃天数、项目分布等量化数据）；再分条列出主要成果（只能基于给定记录归纳，不得虚构）；然后写下一周期的计划；如有风险或需要的支持可单列。",
     "不要虚构未提供的事实；不要使用‘赋能’‘抓手’‘很高兴’等套话；直接陈述做了什么、结果如何。",
-    `周期数据：${JSON.stringify(snapshot)}`,
-  ].join("\n");
-}
-
-function periodSummaryPrompt(snapshot, promptExcerpt) {
-  return [
-    `用户的总结偏好：${promptExcerpt}`,
-    "请根据下面的工作周期数据生成中文工作复盘。",
-    "只返回一个 JSON 对象，不要 Markdown、代码围栏或额外说明。",
-    'JSON 必须严格包含三个字符串字段：{"wins":"主要成果","blockers":"问题与反思","next":"下一周期重点"}。',
-    "不要虚构未提供的事实；信息不足的字段可给出基于现有记录的审慎建议。",
-    "每个字段控制在 1200 个中文字符以内，优先使用易编辑的短段落或项目符号。",
     `周期数据：${JSON.stringify(snapshot)}`,
   ].join("\n");
 }
@@ -1526,18 +1461,6 @@ async function runPeriodAiTask({ periodType, periodStart, project, systemPrompt,
     ),
     parseResult,
     maxTokens: AI_PERIOD_TASK_MAX_TOKENS,
-  });
-}
-
-async function generatePeriodAiSummary(input) {
-  const { periodType, periodStart, project } = requirePeriodSummaryInput(input);
-  return runPeriodAiTask({
-    periodType,
-    periodStart,
-    project,
-    systemPrompt: "你是一个严谨的工作复盘助手。必须严格遵守用户要求的 JSON 输出格式。",
-    makeUserPrompt: periodSummaryPrompt,
-    parseResult: (text, apiKey) => ({ summary: parsePeriodSummaryText(text, [apiKey]) }),
   });
 }
 
@@ -1635,10 +1558,6 @@ function hasDatabaseData() {
   return statements.countData.get().count > 0;
 }
 
-function isMigrationAllowed() {
-  return statements.getMigrationCompleted.get().value !== "1" && !hasDatabaseData();
-}
-
 function groupProjectReviewRows(rows, keyFromRow) {
   const grouped = new Map();
   for (const row of rows) {
@@ -1719,11 +1638,6 @@ function readState() {
     ]),
   );
 
-  const projectReviews = groupProjectReviewRows(
-    statements.readProjectReviews.all(),
-    (row) => row.work_date,
-  );
-
   const projectPeriodReviews = groupProjectReviewRows(
     statements.readProjectPeriodReviews.all(),
     (row) => `${row.period_type}:${row.period_start}`,
@@ -1741,7 +1655,7 @@ function readState() {
     (row) => `${row.period_type}:${row.period_start}`,
   );
 
-  return { tasks, logs, notes, reviews, periodReviews, projectReviews, projectPeriodReviews, periodReports, projectPeriodReports };
+  return { tasks, logs, notes, reviews, periodReviews, projectPeriodReviews, periodReports, projectPeriodReports };
 }
 
 function stateResponse() {
@@ -1749,7 +1663,6 @@ function stateResponse() {
     data: readState(),
     revision: getRevision(),
     empty: !hasDatabaseData(),
-    migrationAllowed: isMigrationAllowed(),
   };
 }
 
@@ -1870,23 +1783,17 @@ function validateLogValue(log, field) {
   };
 }
 
-function validateProjectReviewMap(input, field, { period = false, maxEntries = 100000 } = {}) {
+function validateProjectPeriodReviewMap(input, field, { maxEntries = 100000 } = {}) {
   if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", `${field} 必须是有效对象`);
   const groups = [];
   let entryCount = 0;
   for (const [key, projectValues] of Object.entries(input)) {
-    if (period) {
-      const match = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key);
-      if (!match) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 的键无效`);
-      validatePeriodStart(match[1], match[2], `${field}.${key} 起始日`);
-    } else {
-      requireDate(key, `${field} 日期`);
-    }
+    requirePeriodKey(key, `${field}.${key}`);
     if (!isPlainObject(projectValues)) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 必须是项目对象`);
     const projects = [];
     for (const [project, review] of Object.entries(projectValues)) {
       requireString(project, `${field}.${key} 项目`, 80);
-      projects.push([project, validateReviewValue(review, `${field}.${key}.${project}`, period ? 4000 : 1200)]);
+      projects.push([project, validateReviewValue(review, `${field}.${key}.${project}`, 4000)]);
       entryCount += 1;
       if (entryCount > maxEntries) throw new HttpError(400, "INVALID_STATE", `${field} 条目过多`);
     }
@@ -1918,7 +1825,6 @@ function validateProjectReportMap(input, field, { maxEntries = 100000 } = {}) {
 
 function validateState(input, {
   periodReviewsFallback = {},
-  projectReviewsFallback = {},
   projectPeriodReviewsFallback = {},
   periodReportsFallback = {},
   projectPeriodReportsFallback = {},
@@ -1976,14 +1882,9 @@ function validateState(input, {
     periodReviews[key] = validateReviewValue(review, `periodReviews.${key}`, 4000);
   }
 
-  const projectReviews = validateProjectReviewMap(
-    input.projectReviews === undefined ? projectReviewsFallback : input.projectReviews,
-    "projectReviews",
-  );
-  const projectPeriodReviews = validateProjectReviewMap(
+  const projectPeriodReviews = validateProjectPeriodReviewMap(
     input.projectPeriodReviews === undefined ? projectPeriodReviewsFallback : input.projectPeriodReviews,
     "projectPeriodReviews",
-    { period: true },
   );
 
   const periodReportsInput = input.periodReports === undefined ? periodReportsFallback : input.periodReports;
@@ -2009,22 +1910,17 @@ function validateState(input, {
     notes,
     reviews,
     periodReviews,
-    projectReviews,
     projectPeriodReviews,
     periodReports,
     projectPeriodReports,
   };
 }
 
-function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {}) {
+function replaceState(nextState, expectedRevision) {
   database.exec("BEGIN IMMEDIATE");
   try {
     const currentRevision = getRevision();
-    if (onlyIfEmpty && !isMigrationAllowed()) {
-      database.exec("ROLLBACK");
-      return { migrated: false, ...stateResponse() };
-    }
-    if (!onlyIfEmpty && expectedRevision !== currentRevision) throw new ConflictError();
+    if (expectedRevision !== currentRevision) throw new ConflictError();
 
     database.exec(`
       DELETE FROM logs;
@@ -2032,7 +1928,6 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
       DELETE FROM notes;
       DELETE FROM reviews;
       DELETE FROM period_reviews;
-      DELETE FROM project_reviews;
       DELETE FROM project_period_reviews;
       DELETE FROM period_reports;
       DELETE FROM project_period_reports;
@@ -2072,19 +1967,6 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
         updatedAt,
       );
     }
-    for (const [date, projects] of Object.entries(nextState.projectReviews)) {
-      for (const [project, review] of Object.entries(projects)) {
-        statements.insertProjectReview.run(
-          date,
-          project,
-          review.wins,
-          review.blockers,
-          review.next,
-          review.completedAt,
-          updatedAt,
-        );
-      }
-    }
     for (const [key, projects] of Object.entries(nextState.projectPeriodReviews)) {
       const [periodType, periodStart] = key.split(":");
       for (const [project, review] of Object.entries(projects)) {
@@ -2113,14 +1995,11 @@ function replaceState(nextState, expectedRevision, { onlyIfEmpty = false } = {})
 
     const nextRevision = currentRevision + 1;
     statements.setRevision.run(String(nextRevision));
-    statements.completeMigration.run();
     database.exec("COMMIT");
     return {
-      migrated: onlyIfEmpty,
       data: nextState,
       revision: nextRevision,
       empty: !hasDatabaseData(),
-      migrationAllowed: false,
     };
   } catch (error) {
     if (database.isTransaction) database.exec("ROLLBACK");
@@ -2183,21 +2062,6 @@ const PATCH_OPS = {
   "review.delete": {
     parse: (op, field) => ({ date: requireDate(op.date, `${field}.date`) }),
     run: ({ date }) => statements.deleteReview.run(date),
-  },
-  "projectReview.put": {
-    parse: (op, field) => ({
-      date: requireDate(op.date, `${field}.date`),
-      project: requireString(op.project, `${field}.project`, 80),
-      review: validateReviewValue(op.review, `${field}.review`, 1200),
-    }),
-    run: ({ date, project, review }, now) => statements.upsertProjectReview.run(date, project, ...reviewParams(review, now)),
-  },
-  "projectReview.delete": {
-    parse: (op, field) => ({
-      date: requireDate(op.date, `${field}.date`),
-      project: requireString(op.project, `${field}.project`, 80),
-    }),
-    run: ({ date, project }) => statements.deleteProjectReview.run(date, project),
   },
   "periodReview.put": {
     parse: (op, field) => ({
@@ -2283,7 +2147,6 @@ function applyPatch({ baseRevision, ops }) {
     for (const { handler, args } of ops) handler.run(args, now);
     const nextRevision = currentRevision + 1;
     statements.setRevision.run(String(nextRevision));
-    statements.completeMigration.run();
     database.exec("COMMIT");
     return { revision: nextRevision, stale: baseRevision !== currentRevision };
   } catch (error) {
@@ -3123,18 +2986,18 @@ function sendError(response, error) {
   sendJson(response, status, { error: { code, message } });
 }
 
-function readJsonBody(request) {
+function readJsonBody(request, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let bytes = 0;
     let tooLarge = false;
     request.on("data", (chunk) => {
       bytes += chunk.length;
-      if (bytes > MAX_BODY_BYTES) tooLarge = true;
+      if (bytes > maxBytes) tooLarge = true;
       else chunks.push(chunk);
     });
     request.on("end", () => {
-      if (tooLarge) return reject(new HttpError(413, "BODY_TOO_LARGE", "请求内容超过 2 MiB 限制"));
+      if (tooLarge) return reject(new HttpError(413, "BODY_TOO_LARGE", `请求内容超过 ${Math.round(maxBytes / 1048576)} MiB 限制`));
       try {
         const text = Buffer.concat(chunks).toString("utf8");
         resolve(text ? JSON.parse(text) : {});
@@ -3250,14 +3113,13 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 200, stateResponse());
       }
       if (request.method === "PUT") {
-        const body = await readJsonBody(request);
+        const body = await readJsonBody(request, MAX_STATE_BODY_BYTES);
         if (!Number.isSafeInteger(body.revision) || body.revision < 0) {
           throw new HttpError(400, "INVALID_REVISION", "revision 无效");
         }
         const currentState = readState();
         const nextState = validateState(body.data, {
           periodReviewsFallback: currentState.periodReviews,
-          projectReviewsFallback: currentState.projectReviews,
           projectPeriodReviewsFallback: currentState.projectPeriodReviews,
           periodReportsFallback: currentState.periodReports,
           projectPeriodReportsFallback: currentState.projectPeriodReports,
@@ -3269,13 +3131,6 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 200, applyPatch(validatePatch(await readJsonBody(request))));
       }
       throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
-    }
-
-    if (url.pathname === "/api/migrate") {
-      if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
-      const body = await readJsonBody(request);
-      const legacyState = validateState(body.data);
-      return sendJson(response, 200, replaceState(legacyState, null, { onlyIfEmpty: true }));
     }
 
     if (url.pathname === "/api/projects") {
@@ -3367,12 +3222,6 @@ const server = createServer(async (request, response) => {
       if (request.method === "PUT") return sendJson(response, 200, saveAiSummarySettings(await readJsonBody(request)));
       if (request.method === "DELETE") return sendJson(response, 200, resetAiSummarySettings());
       throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
-    }
-
-    if (url.pathname === "/api/ai/period-summary") {
-      if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
-      consumeRateLimit(aiOperations, `summary:${currentSession(request)?.id || sourceKey(request)}`, { limit: 10, windowMs: 60 * 1000 });
-      return sendJson(response, 200, await generatePeriodAiSummary(await readJsonBody(request)));
     }
 
     if (url.pathname === "/api/ai/period-report") {
