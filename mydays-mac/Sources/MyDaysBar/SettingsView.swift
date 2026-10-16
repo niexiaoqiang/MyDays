@@ -66,8 +66,10 @@ struct SettingsView: View {
             token = model.settings.token
             intervalMinutes = model.settings.intervalMinutes
             launchAtLogin = model.launchesAtLogin
-            // A menu bar app is never frontmost on its own; bring the window forward.
-            NSApp.activate()
+        }
+        .onDisappear {
+            // Back to a menu-bar-only app once the window closes.
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 

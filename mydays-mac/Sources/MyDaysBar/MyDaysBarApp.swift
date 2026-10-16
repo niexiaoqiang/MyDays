@@ -12,11 +12,16 @@ struct MyDaysBarApp: App {
         } label: {
             Image(systemName: model.statusSymbol)
         }
-        Settings {
+        // A plain window rather than a Settings scene: SettingsLink does not reliably open or front it from a menu bar app.
+        Window("MyDays 设置", id: settingsWindowID) {
             SettingsView(model: model)
         }
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
     }
 }
+
+let settingsWindowID = "settings"
 
 extension SyncModel {
     var statusSymbol: String {
@@ -54,6 +59,7 @@ extension SyncModel {
 
 struct MenuContent: View {
     let model: SyncModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text(model.statusText)
@@ -68,8 +74,13 @@ struct MenuContent: View {
         .keyboardShortcut("o")
         Toggle("暂停采集", isOn: Binding(get: { model.settings.paused }, set: { value in model.update { $0.paused = value } }))
         Divider()
-        SettingsLink { Text("设置…") }
-            .keyboardShortcut(",")
+        Button("设置…") {
+            // An accessory app cannot bring its windows forward; become a regular app while the window is open.
+            NSApp.setActivationPolicy(.regular)
+            openWindow(id: settingsWindowID)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        .keyboardShortcut(",")
         Button("退出 MyDaysBar") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
