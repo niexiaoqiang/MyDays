@@ -140,6 +140,7 @@ const elements = {
   agentDigestClear: document.querySelector("#agent-digest-clear"),
   agentTokenForm: document.querySelector("#agent-token-form"),
   agentTokenName: document.querySelector("#agent-token-name"),
+  agentTokenScope: document.querySelector("#agent-token-scope"),
   agentTokenCreated: document.querySelector("#agent-token-created"),
   agentTokenValue: document.querySelector("#agent-token-value"),
   agentTokenCopy: document.querySelector("#agent-token-copy"),
@@ -367,7 +368,7 @@ function renderAgentDigest({ fillForm = false } = {}) {
   elements.agentTokenList.innerHTML = active.length
     ? active.map((token) => `
       <div class="agent-token-row">
-        <span><strong>${escapeHtml(token.name)}</strong>${token.builtin ? '<i class="origin-chip">自动</i>' : ""}<small><code>${escapeHtml(token.prefix)}…</code> · ${token.lastUsedAt ? `最近连接 ${escapeHtml(formatDateTime(token.lastUsedAt))}` : "尚未连接"}</small></span>
+        <span><strong>${escapeHtml(token.name)}</strong><i class="origin-chip${token.scope === "read" ? " read" : ""}">${token.scope === "read" ? "读取" : "采集"}</i>${token.builtin ? '<i class="origin-chip">自动</i>' : ""}<small><code>${escapeHtml(token.prefix)}…</code> · ${token.lastUsedAt ? `最近连接 ${escapeHtml(formatDateTime(token.lastUsedAt))}` : "尚未连接"}</small></span>
         <button class="text-button danger-text" type="button" data-token-revoke="${escapeAttribute(token.id)}" data-token-name="${escapeAttribute(token.name)}">吊销</button>
       </div>`).join("")
     : '<div class="summary-empty">还没有采集器令牌。开启功能后会自动创建本机采集器的令牌。</div>';
@@ -477,7 +478,7 @@ async function createAgentToken(event) {
   const name = elements.agentTokenName.value.trim();
   if (!name) return;
   try {
-    const created = await requestJson("/api/agent-tokens", { method: "POST", body: JSON.stringify({ name }) });
+    const created = await requestJson("/api/agent-tokens", { method: "POST", body: JSON.stringify({ name, scope: elements.agentTokenScope.value }) });
     elements.agentTokenValue.textContent = created.token;
     elements.agentTokenCreated.hidden = false;
     elements.agentTokenName.value = "";

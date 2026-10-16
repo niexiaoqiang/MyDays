@@ -135,6 +135,11 @@ async function expectStartupFailure(env, expectedText) {
     assert.equal((await fetch(`${baseUrl}/`, { headers: bearer, redirect: "manual" })).status, 302, "采集器令牌不得访问页面");
     response = await fetch(`${baseUrl}/api/agent/turns`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ turns: [] }) });
     assert.equal(response.status, 401, "登录会话不能代替采集器令牌");
+    response = await fetch(`${baseUrl}/api/agent-tokens`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ name: "Claude Code", scope: "read" }) });
+    const readBearer = { Authorization: `Bearer ${(await response.json()).token}` };
+    assert.equal((await fetch(`${baseUrl}/api/agent/search?q=test`, { headers: readBearer })).status, 200, "读取令牌不需要登录会话");
+    assert.equal((await fetch(`${baseUrl}/api/state`, { headers: readBearer })).status, 401, "读取令牌不得访问业务状态接口");
+    assert.equal((await fetch(`${baseUrl}/api/agent/search?q=test`, { headers: { ...readBearer, Origin: baseUrl } })).status, 403, "读取令牌不得在浏览器页面中使用");
     response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Cookie: cookie, Origin: baseUrl } });
     assert.equal(response.status, 200);
     assert.equal((await fetch(`${baseUrl}/api/state`, { headers: { Cookie: cookie } })).status, 401);

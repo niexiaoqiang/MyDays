@@ -2188,14 +2188,14 @@ function applyPatch({ baseRevision, ops }) {
 
 const agentStatements = {
   listTokens: database.prepare(`
-    SELECT id, name, token_prefix, builtin, created_at, last_used_at, revoked_at
+    SELECT id, name, token_prefix, builtin, scope, created_at, last_used_at, revoked_at
     FROM agent_tokens ORDER BY revoked_at IS NOT NULL, created_at DESC
   `),
-  readTokenByHash: database.prepare("SELECT id FROM agent_tokens WHERE token_hash = ? AND revoked_at IS NULL"),
+  readTokenByHash: database.prepare("SELECT id, scope FROM agent_tokens WHERE token_hash = ? AND revoked_at IS NULL"),
   readBuiltinToken: database.prepare("SELECT id FROM agent_tokens WHERE builtin = 1 AND revoked_at IS NULL"),
   countActiveTokens: database.prepare("SELECT COUNT(*) AS count FROM agent_tokens WHERE revoked_at IS NULL"),
   insertToken: database.prepare(`
-    INSERT INTO agent_tokens(id, name, token_hash, token_prefix, builtin, created_at) VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_tokens(id, name, token_hash, token_prefix, builtin, scope, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
   touchToken: database.prepare("UPDATE agent_tokens SET last_used_at = ? WHERE id = ?"),
   revokeToken: database.prepare("UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL"),
@@ -2406,19 +2406,20 @@ function projectAgentToken(row) {
     name: row.name,
     prefix: row.token_prefix,
     builtin: Boolean(row.builtin),
+    scope: row.scope,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
     revokedAt: row.revoked_at,
   };
 }
 
-function issueAgentToken(name, { builtin = false } = {}) {
+function issueAgentToken(name, { builtin = false, scope = "ingest" } = {}) {
   if (agentStatements.countActiveTokens.get().count >= MAX_ACTIVE_AGENT_TOKENS) {
     throw new HttpError(400, "AGENT_TOKEN_LIMIT", `最多保留 ${MAX_ACTIVE_AGENT_TOKENS} 个有效令牌，请先吊销不用的令牌`);
   }
   const token = `mdk_${randomBytes(32).toString("base64url")}`;
   const id = randomUUID();
-  agentStatements.insertToken.run(id, name, hashAgentToken(token), token.slice(0, 12), builtin ? 1 : 0, new Date().toISOString());
+  agentStatements.insertToken.run(id, name, hashAgentToken(token), token.slice(0, 12), builtin ? 1 : 0, scope, new Date().toISOString());
   return { id, token };
 }
 
@@ -2428,7 +2429,9 @@ function createAgentToken(input) {
   if (!name || name.length > 60 || /[\u0000-\u001f\u007f]/.test(name)) {
     throw new HttpError(400, "AGENT_TOKEN_INVALID_INPUT", "令牌名称不能为空且不能超过 60 个字符");
   }
-  const { id, token } = issueAgentToken(name);
+  const scope = input.scope ?? "ingest";
+  if (scope !== "ingest" && scope !== "read") throw new HttpError(400, "AGENT_TOKEN_INVALID_INPUT", "令牌用途无效");
+  const { id, token } = issueAgentToken(name, { scope });
   const row = agentStatements.listTokens.all().find((entry) => entry.id === id);
   return { token, ...projectAgentToken(row) };
 }
@@ -2465,7 +2468,134 @@ function authenticateAgentRequest(request) {
     agentTokenTouches.set(row.id, now);
     agentStatements.touchToken.run(new Date(now).toISOString(), row.id);
   }
-  return row.id;
+  return row;
+}
+
+function requireAgentScope(tokenRow, scope) {
+  if (tokenRow.scope !== scope) {
+    throw new HttpError(403, "AGENT_SCOPE_FORBIDDEN", scope === "read" ? "这个令牌只能推送素材，不能读取记录" : "这个令牌只能读取记录，不能推送素材");
+  }
+}
+
+const READ_MAX_DAYS = 31;
+const READ_SEARCH_LIMIT = 100;
+
+function requireReadDate(value, field) {
+  try {
+    return requireDate(value ?? "", field);
+  } catch {
+    throw new HttpError(400, "AGENT_READ_INVALID", `${field} 不是有效日期（YYYY-MM-DD）`);
+  }
+}
+
+function logOrigin(log) {
+  if (log.sourceTaskId) return "完成待办";
+  return log.source === "agent-digest" ? "AI 整理" : "手动记录";
+}
+
+function readDaysForAgent(from, to) {
+  if (from > to) throw new HttpError(400, "AGENT_READ_INVALID", "from 不能晚于 to");
+  const span = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
+  if (span > READ_MAX_DAYS) throw new HttpError(400, "AGENT_READ_INVALID", `一次最多读取 ${READ_MAX_DAYS} 天`);
+  const data = readState();
+  const days = [];
+  for (let date = from; date <= to; date = shiftDateKey(date, 1)) {
+    const tasks = data.tasks.filter((task) => task.date === date);
+    const logs = data.logs.filter((log) => log.date === date && !log.sourceTaskId);
+    const review = data.reviews[date];
+    const note = data.notes[date]?.trim() ?? "";
+    if (!tasks.length && !logs.length && !note && !review) continue;
+    days.push({
+      date,
+      completedTasks: tasks.filter((task) => task.completed).map((task) => ({ title: task.title, project: task.project })),
+      openTasks: tasks.filter((task) => !task.completed).map((task) => ({ title: task.title, project: task.project })),
+      workLogs: logs.map((log) => ({ title: log.title, project: log.project, origin: logOrigin(log) })),
+      note,
+      review: review ? { problems: review.blockers ?? "", tomorrow: review.next ?? "", completed: Boolean(review.completedAt) } : null,
+    });
+  }
+  return { from, to, days };
+}
+
+function searchForAgent(query, limit) {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length || query.length > 200) throw new HttpError(400, "AGENT_READ_INVALID", "请提供 1 到 200 字的关键词");
+  const data = readState();
+  const entries = [];
+  const reviewText = (review) => [review?.wins, review?.blockers, review?.next].filter(Boolean).join("\n");
+  for (const task of data.tasks) entries.push({ type: task.completed ? "已完成待办" : "待办", date: task.date, project: task.project, text: task.title });
+  for (const log of data.logs) {
+    if (!log.sourceTaskId) entries.push({ type: logOrigin(log), date: log.date, project: log.project, text: log.title });
+  }
+  for (const [date, content] of Object.entries(data.notes)) entries.push({ type: "笔记", date, project: "", text: content });
+  for (const [date, review] of Object.entries(data.reviews)) entries.push({ type: "今日复盘", date, project: "", text: reviewText(review) });
+  const addPeriod = (key, project, type, text) => {
+    const [periodType, start] = key.split(":");
+    entries.push({ type, date: start, project, period: periodType, text });
+  };
+  for (const [key, review] of Object.entries(data.periodReviews)) addPeriod(key, "", "周期复盘", reviewText(review));
+  for (const [key, report] of Object.entries(data.periodReports)) addPeriod(key, "", "周期汇报", report.content);
+  for (const [key, projects] of Object.entries(data.projectPeriodReviews)) {
+    for (const [project, review] of Object.entries(projects)) addPeriod(key, project, "周期复盘", reviewText(review));
+  }
+  for (const [key, projects] of Object.entries(data.projectPeriodReports)) {
+    for (const [project, report] of Object.entries(projects)) addPeriod(key, project, "周期汇报", report.content);
+  }
+  const matches = entries
+    .filter((entry) => entry.text?.trim() && terms.every((term) => `${entry.text}\n${entry.project}`.toLowerCase().includes(term)))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  return {
+    query,
+    total: matches.length,
+    results: matches.slice(0, limit).map((entry) => ({ ...entry, text: entry.text.length > 600 ? `${entry.text.slice(0, 600)}…` : entry.text })),
+  };
+}
+
+function periodStartOf(periodType, date) {
+  const day = new Date(`${date}T00:00:00Z`);
+  if (periodType === "week") day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+  if (periodType === "month") day.setUTCDate(1);
+  if (periodType === "quarter") day.setUTCMonth(day.getUTCMonth() - (day.getUTCMonth() % 3), 1);
+  if (periodType === "year") day.setUTCMonth(0, 1);
+  return day.toISOString().slice(0, 10);
+}
+
+function periodForAgent(periodType, date, project) {
+  if (!["week", "month", "quarter", "year"].includes(periodType)) {
+    throw new HttpError(400, "AGENT_READ_INVALID", "period 必须是 week、month、quarter 或 year");
+  }
+  const start = periodStartOf(periodType, date);
+  const end = periodEndKey(periodType, start);
+  const data = readState();
+  const inScope = (item) => item.date >= start && item.date <= end && (!project || item.project === project);
+  const tasks = data.tasks.filter(inScope);
+  const logs = data.logs.filter((log) => inScope(log) && !log.sourceTaskId);
+  const key = `${periodType}:${start}`;
+  const report = project ? data.projectPeriodReports[key]?.[project] : data.periodReports[key];
+  const review = project ? data.projectPeriodReviews[key]?.[project] : data.periodReviews[key];
+  const activeDays = new Set([...tasks.map((task) => task.date), ...logs.map((log) => log.date)]);
+  const time = readAgentTime(start, end);
+  return {
+    period: periodType,
+    start,
+    end,
+    project: project || null,
+    metrics: {
+      completedTasks: tasks.filter((task) => task.completed).length,
+      totalTasks: tasks.length,
+      workLogs: logs.length,
+      activeDays: activeDays.size,
+      aiCollaborationMinutes: project ? null : time.totalMinutes,
+    },
+    achievements: [
+      ...tasks.filter((task) => task.completed).map((task) => ({ date: task.date, title: task.title, project: task.project, origin: "完成待办" })),
+      ...logs.map((log) => ({ date: log.date, title: log.title, project: log.project, origin: logOrigin(log) })),
+    ].sort((a, b) => a.date.localeCompare(b.date)),
+    openItems: tasks.filter((task) => !task.completed).map((task) => ({ date: task.date, title: task.title, project: task.project })),
+    timeByProject: project ? [] : time.byProject,
+    report: report?.content ?? "",
+    notes: review?.blockers ?? "",
+  };
 }
 
 function validateAgentTurns(input) {
@@ -3209,10 +3339,29 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname.startsWith("/api/agent/")) {
-      authenticateAgentRequest(request);
+      const tokenRow = authenticateAgentRequest(request);
       const digestSettings = readAgentDigestSettings();
+      const readRoutes = ["/api/agent/days", "/api/agent/search", "/api/agent/period"];
+      if (readRoutes.includes(url.pathname)) {
+        if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+        requireAgentScope(tokenRow, "read");
+        const params = url.searchParams;
+        if (url.pathname === "/api/agent/days") {
+          const from = requireReadDate(params.get("from"), "from");
+          return sendJson(response, 200, readDaysForAgent(from, params.get("to") ? requireReadDate(params.get("to"), "to") : from), request);
+        }
+        if (url.pathname === "/api/agent/search") {
+          const limit = Math.min(READ_SEARCH_LIMIT, Math.max(1, Number.parseInt(params.get("limit") ?? "30", 10) || 30));
+          return sendJson(response, 200, searchForAgent((params.get("q") ?? "").trim(), limit), request);
+        }
+        const project = (params.get("project") ?? "").trim();
+        if (project.length > 80) throw new HttpError(400, "AGENT_READ_INVALID", "project 过长");
+        const date = params.get("date") ? requireReadDate(params.get("date"), "date") : new Date().toISOString().slice(0, 10);
+        return sendJson(response, 200, periodForAgent(params.get("period") ?? "week", date, project), request);
+      }
       if (url.pathname === "/api/agent/config") {
         if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+        requireAgentScope(tokenRow, "ingest");
         return sendJson(response, 200, {
           enabled: digestSettings.enabled,
           maxPromptChars: AGENT_PROMPT_CHARS,
@@ -3223,6 +3372,7 @@ const server = createServer(async (request, response) => {
       }
       if (url.pathname === "/api/agent/turns") {
         if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+        requireAgentScope(tokenRow, "ingest");
         if (!digestSettings.enabled) throw new HttpError(409, "AGENT_DIGEST_DISABLED", "Agent 工作汇总尚未开启");
         return sendJson(response, 200, ingestAgentTurns(validateAgentTurns(await readJsonBody(request))), request);
       }

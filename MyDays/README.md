@@ -160,6 +160,28 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 node collector/collector.mjs --dry-run
 ```
 
+### 让 agent 读取 MyDays
+
+MyDays 提供一个只读的 MCP 服务，Claude Code、Codex 等 agent 接入后可以直接查询你的记录，例如“我上周做了什么”“帮我写本月周报”“上次 WebSocket 断线是怎么处理的”。它提供三个工具：搜索记录、读取某天或某段日期的记录（最多 31 天）、读取某个周 / 月 / 季 / 年的概览（指标、成果、未完成事项、AI 协作时间、已保存的周报）。
+
+1. 在设置页的“采集器与读取令牌”中创建一个用途为“读取”的令牌。
+2. 在 Claude Code 中注册（需要本机安装 Node.js 24）：
+
+   ```bash
+   claude mcp add mydays -e MYDAYS_URL=http://localhost:4173 -e MYDAYS_TOKEN=mdk_xxx -- node /path/to/MyDays/collector/mcp.mjs
+   ```
+
+3. Codex 在 `~/.codex/config.toml` 中添加：
+
+   ```toml
+   [mcp_servers.mydays]
+   command = "node"
+   args = ["/path/to/MyDays/collector/mcp.mjs"]
+   env = { MYDAYS_URL = "http://localhost:4173", MYDAYS_TOKEN = "mdk_xxx" }
+   ```
+
+读取令牌能看到全部待办、记录、笔记、复盘和周期汇报，但不能修改任何数据，也不能推送素材；采集令牌则只能推送素材、不能读取。这个 MCP 服务独立于“Agent 工作汇总”开关，不开启汇总也能使用。
+
 ### 需要知道的
 
 - 关闭开关后，服务端拒收素材、不再调用 AI，采集器也不再读取任何会话文件。停止采集器：`docker compose --profile agent-digest down`。

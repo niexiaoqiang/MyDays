@@ -6026,3 +6026,18 @@ p > .origin-chip:first-child {
   flex-wrap: wrap;
   row-gap: 6px;
 }
+
+.origin-chip.read {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
+.agent-token-form select {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 13px;
+}
