@@ -5983,3 +5983,46 @@ p > .origin-chip:first-child {
     grid-template-columns: 1fr;
   }
 }
+
+/* AI collaboration time */
+.summary-time-card {
+  margin-bottom: 16px;
+}
+
+.summary-time-card .project-distribution {
+  padding-bottom: 6px;
+}
+
+.summary-time-total {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.summary-time-card .project-row strong {
+  min-width: 5.5em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.summary-time-note {
+  margin: 0;
+  padding: 0 28px 22px;
+  color: var(--muted-light);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.summary-time-note[data-filtered="true"]::after {
+  content: " 按代码目录统计，不受上方的项目筛选影响。";
+}
+
+.summary-time-card .project-row {
+  grid-template-columns: minmax(72px, 180px) minmax(0, 1fr) auto;
+}
+
+.summary-time-card .panel-header {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}

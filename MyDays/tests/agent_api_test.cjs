@@ -265,6 +265,29 @@ async function digestLogs(date) {
     result = await runDigest(today);
     assert.equal(result.body.days.find((entry) => entry.date === today).run.status, "ok");
 
+    // Time estimate: turns closer than 20 minutes merge into one block; parallel projects count once in the total.
+    const timeDate = dateKey(5);
+    const at = (hhmm) => new Date(`${timeDate}T${hhmm}:00.000Z`).toISOString();
+    result = await pushTurns(token, [
+      turn(5, { project: "甲", sessionId: "time-a", startedAt: at("10:00"), endedAt: at("10:10") }),
+      turn(5, { project: "甲", sessionId: "time-a", startedAt: at("10:20"), endedAt: at("10:30") }),
+      turn(5, { project: "甲", sessionId: "time-a", startedAt: at("13:00"), endedAt: at("13:01") }),
+      turn(5, { project: "乙", sessionId: "time-b", agent: "codex", startedAt: at("10:05"), endedAt: at("10:25") }),
+    ]);
+    assert.deepEqual(result.body, { accepted: 4 });
+    const time = await waitFor(async () => {
+      const { body } = await request(`/api/agent-digest/time?from=${timeDate}&to=${timeDate}`);
+      return body.totalMinutes ? body : null;
+    }, "time estimate");
+    assert.equal(time.totalMinutes, 35, "并行的项目在总时长中只计一次，短于 5 分钟的段按 5 分钟计");
+    assert.deepEqual(time.byProject, [{ project: "甲", minutes: 35 }, { project: "乙", minutes: 20 }]);
+    assert.deepEqual(time.byDay, [{ date: timeDate, minutes: 35 }]);
+    for (const query of ["from=bad&to=2026-01-01", `from=${today}&to=${yesterday}`]) {
+      result = await request(`/api/agent-digest/time?${query}`);
+      assert.equal(result.response.status, 400);
+      assert.equal(result.body.error.code, "AGENT_TIME_INVALID");
+    }
+
     // Larger days are summarized per project first, then merged.
     const big = dateKey(3);
     const longReply = "完成了一项比较大的改动，".repeat(120);
@@ -318,7 +341,7 @@ async function digestLogs(date) {
     assert.equal(aiCalls.length, callsWhenDisabled, "关闭后不得再调用模型");
 
     result = await request("/api/agent-digest/turns", { method: "DELETE" });
-    assert.equal(result.body.deleted, 18);
+    assert.equal(result.body.deleted, 22);
     const exported = JSON.stringify((await request("/api/state")).body);
     assert.equal(exported.includes("mdk_"), false);
     assert.equal(exported.includes("agent_turns"), false);

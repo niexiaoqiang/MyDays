@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=28" />
+    <link rel="stylesheet" href="/styles.css?v=29" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -460,6 +460,15 @@
               </section>
             </div>
 
+            <section class="panel summary-time-card" id="summary-time-card" aria-labelledby="summary-time-title" hidden>
+              <div class="panel-header compact">
+                <div><p class="section-kicker">TIME</p><h2 id="summary-time-title">AI 协作时间</h2></div>
+                <strong class="summary-time-total" id="summary-time-total"></strong>
+              </div>
+              <div class="project-distribution" id="summary-time-projects"></div>
+              <p class="summary-time-note" id="summary-time-note">根据 AI 会话的时间估算：间隔不超过 20 分钟的对话算作连续工作，并行的会话在合计中只计一次。不包含没有使用 AI 的工作。</p>
+            </section>
+
             <div class="summary-lists">
               <section class="panel summary-list-card">
                 <div class="panel-header compact summary-achievement-header">
@@ -675,6 +684,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=29"></script>
+    <script src="/app.js?v=30"></script>
   </body>
 </html>

@@ -79,13 +79,14 @@ async function assertUpgraded() {
     await runServer(assertUpgraded);
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "8");
+    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "9");
     assert.equal(migrated.prepare("PRAGMA table_info(logs)").all().filter((column) => column.name === "source").length, 1, "重复启动不得重复添加 source 列");
-    for (const table of ["agent_tokens", "agent_turns", "agent_digest_settings", "agent_digest_runs"]) {
+    assert.equal(migrated.prepare("PRAGMA table_info(agent_tokens)").all().filter((column) => column.name === "scope").length, 1, "重复启动不得重复添加 scope 列");
+    for (const table of ["agent_tokens", "agent_turns", "agent_digest_settings", "agent_digest_runs", "agent_time_daily"]) {
       assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)?.name, table);
     }
     migrated.close();
-    console.log("MyDays schema v7 to v8 upgrade test passed");
+    console.log("MyDays schema v7 to v9 upgrade test passed");
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }

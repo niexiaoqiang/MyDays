@@ -165,6 +165,10 @@ const elements = {
   summaryDaysTotal: document.querySelector("#summary-days-total"),
   summaryTrend: document.querySelector("#summary-trend"),
   summaryProjects: document.querySelector("#summary-projects"),
+  summaryTimeCard: document.querySelector("#summary-time-card"),
+  summaryTimeTotal: document.querySelector("#summary-time-total"),
+  summaryTimeProjects: document.querySelector("#summary-time-projects"),
+  summaryTimeNote: document.querySelector("#summary-time-note"),
   summaryAchievements: document.querySelector("#summary-achievements"),
   summaryAchievementsPager: document.querySelector("#summary-achievements-pager"),
   summaryAchievementsPrev: document.querySelector("#summary-achievements-prev"),
@@ -1739,6 +1743,50 @@ function renderTrend(context) {
   `).join("");
 }
 
+const agentTimeCache = new Map();
+const AGENT_TIME_CACHE_MS = 60 * 1000;
+
+function formatMinutes(minutes) {
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+}
+
+async function renderAgentTime(context) {
+  const card = elements.summaryTimeCard;
+  if (!agentDigest?.settings.enabled) {
+    card.hidden = true;
+    return;
+  }
+  const key = `${context.startKey}:${context.endKey}`;
+  card.dataset.range = key;
+  let cached = agentTimeCache.get(key);
+  if (!cached || Date.now() - cached.at > AGENT_TIME_CACHE_MS) {
+    try {
+      cached = { at: Date.now(), data: await requestJson(`/api/agent-digest/time?from=${context.startKey}&to=${context.endKey}`) };
+      agentTimeCache.set(key, cached);
+    } catch {
+      card.hidden = true;
+      return;
+    }
+  }
+  if (card.dataset.range !== key) return;
+  const { totalMinutes, byProject } = cached.data;
+  card.hidden = !totalMinutes;
+  if (!totalMinutes) return;
+  elements.summaryTimeTotal.textContent = `合计 ${formatMinutes(totalMinutes)}`;
+  const top = byProject.slice(0, 8);
+  const max = Math.max(...top.map((entry) => entry.minutes), 1);
+  elements.summaryTimeProjects.innerHTML = top.map((entry, index) => `
+    <div class="project-row">
+      <span><i class="project-color color-${index % 4}"></i>${escapeHtml(entry.project)}</span>
+      <div><i style="width:${Math.max(2, Math.round((entry.minutes / max) * 100))}%"></i></div>
+      <strong>${escapeHtml(formatMinutes(entry.minutes))}</strong>
+    </div>`).join("");
+  elements.summaryTimeNote.dataset.filtered = String(Boolean(summaryProject));
+}
+
 function renderProjects(context) {
   const counts = new Map();
   context.tasks.forEach((task) => counts.set(task.project || "未分类", (counts.get(task.project || "未分类") ?? 0) + 1));
@@ -2076,6 +2124,7 @@ function renderSummary() {
   renderAchievements(achievements);
   renderSummaryList(elements.summaryOpenItems, openItems, "这个周期没有未完成事项");
   renderSummaryReview(context);
+  void renderAgentTime(context);
 }
 
 function saveSummaryReviewDraft({ defer = false } = {}) {

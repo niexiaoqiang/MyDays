@@ -24,6 +24,11 @@ const MAX_AGENT_DIGEST_ITEMS = 10;
 const AGENT_DIGEST_SINGLE_PASS_CHARS = 12000;
 const AGENT_DIGEST_MAX_ATTEMPTS = 3;
 const AGENT_DIGEST_RETRY_MS = 60 * 60 * 1000;
+// Time estimation: consecutive turns closer than the idle gap count as one continuous block of work.
+const AGENT_TIME_IDLE_GAP_MS = 20 * 60 * 1000;
+const AGENT_TIME_MIN_BLOCK_MS = 5 * 60 * 1000;
+const AGENT_TIME_MAX_TURN_MS = 3 * 60 * 60 * 1000;
+const AGENT_TIME_TOTAL_KEY = "";
 const AGENT_DIGEST_CHECK_SECONDS = Math.max(1, Number.parseInt(process.env.AGENT_DIGEST_CHECK_SECONDS ?? "300", 10) || 300);
 const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 const MAX_AI_SUMMARY_ITEMS = 120;
@@ -446,6 +451,29 @@ try {
     ) STRICT;
 
     UPDATE metadata SET value = '8' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 8;
+  `);
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
+database.exec("BEGIN IMMEDIATE");
+try {
+  if (!database.prepare("PRAGMA table_info(agent_tokens)").all().some((column) => column.name === "scope")) {
+    database.exec("ALTER TABLE agent_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'ingest' CHECK (scope IN ('ingest', 'read'))");
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agent_time_daily (
+      work_date TEXT NOT NULL,
+      project TEXT NOT NULL,
+      minutes INTEGER NOT NULL CHECK (minutes >= 0),
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (work_date, project)
+    ) STRICT;
+
+    UPDATE metadata SET value = '9' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 9;
   `);
   database.exec("COMMIT");
 } catch (error) {
@@ -2220,6 +2248,14 @@ const agentStatements = {
       last_turn_received_at = excluded.last_turn_received_at, ran_at = excluded.ran_at
   `),
   deleteRunsBefore: database.prepare("DELETE FROM agent_digest_runs WHERE work_date < ?"),
+  deleteTimeForDate: database.prepare("DELETE FROM agent_time_daily WHERE work_date = ?"),
+  insertTime: database.prepare(`
+    INSERT INTO agent_time_daily(work_date, project, minutes, turn_count, updated_at) VALUES (?, ?, ?, ?, ?)
+  `),
+  readTimeRange: database.prepare(`
+    SELECT work_date, project, minutes, turn_count FROM agent_time_daily
+    WHERE work_date >= ? AND work_date <= ? ORDER BY work_date ASC
+  `),
   readDigestLogs: database.prepare("SELECT id FROM logs WHERE work_date = ? AND source = 'agent-digest'"),
   deleteDigestLogs: database.prepare("DELETE FROM logs WHERE work_date = ? AND source = 'agent-digest'"),
 };
@@ -2692,6 +2728,80 @@ async function summarizeAgentTurns(date, turns, settings, provider) {
   return { items, inputChars };
 }
 
+// Wall-clock estimate from turn timestamps; parallel sessions on different projects are counted once in the total.
+function estimateMinutes(turns) {
+  const intervals = turns
+    .map((turn) => {
+      const start = Date.parse(turn.started_at);
+      const end = Math.max(start, Math.min(Date.parse(turn.ended_at), start + AGENT_TIME_MAX_TURN_MS));
+      return [start, end];
+    })
+    .filter(([start]) => Number.isFinite(start))
+    .sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let block = null;
+  const close = () => {
+    if (block) total += Math.max(block[1] - block[0], AGENT_TIME_MIN_BLOCK_MS);
+  };
+  for (const [start, end] of intervals) {
+    if (block && start - block[1] <= AGENT_TIME_IDLE_GAP_MS) {
+      block[1] = Math.max(block[1], end);
+    } else {
+      close();
+      block = [start, end];
+    }
+  }
+  close();
+  return Math.round(total / 60000);
+}
+
+function refreshAgentTime(settings, turnsByDate) {
+  const now = new Date().toISOString();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    for (const date of recentLogicalDates(settings)) {
+      const turns = (turnsByDate.get(date) ?? []).filter((turn) => !settings.excludedProjects.includes(turn.project));
+      if (!turns.length) continue;
+      agentStatements.deleteTimeForDate.run(date);
+      const byProject = new Map();
+      for (const turn of turns) {
+        const project = turn.project || "未分类";
+        if (!byProject.has(project)) byProject.set(project, []);
+        byProject.get(project).push(turn);
+      }
+      for (const [project, projectTurns] of byProject) {
+        agentStatements.insertTime.run(date, project, estimateMinutes(projectTurns), projectTurns.length, now);
+      }
+      agentStatements.insertTime.run(date, AGENT_TIME_TOTAL_KEY, estimateMinutes(turns), turns.length, now);
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function readAgentTime(from, to) {
+  const byProject = new Map();
+  const byDay = [];
+  let totalMinutes = 0;
+  for (const row of agentStatements.readTimeRange.all(from, to)) {
+    if (row.project === AGENT_TIME_TOTAL_KEY) {
+      totalMinutes += row.minutes;
+      byDay.push({ date: row.work_date, minutes: row.minutes });
+    } else {
+      byProject.set(row.project, (byProject.get(row.project) ?? 0) + row.minutes);
+    }
+  }
+  return {
+    from,
+    to,
+    totalMinutes,
+    byProject: [...byProject.entries()].map(([project, minutes]) => ({ project, minutes })).sort((a, b) => b.minutes - a.minutes),
+    byDay,
+  };
+}
+
 function replaceAgentDigestLogs(date, items) {
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -2782,6 +2892,7 @@ async function checkAgentDigests() {
     }
     const due = summaryTimeReached(now, settings);
     const turnsByDate = readAgentTurnsByDate(settings);
+    refreshAgentTime(settings, turnsByDate);
     for (const date of recentLogicalDates(settings).reverse()) {
       const run = agentStatements.readRun.get(date);
       const turns = turnsByDate.get(date) ?? [];
@@ -3171,6 +3282,20 @@ const server = createServer(async (request, response) => {
         await readJsonBody(request),
         () => consumeRateLimit(aiOperations, limitKey, { limit: 6, windowMs: 60 * 1000 }),
       ));
+    }
+
+    if (url.pathname === "/api/agent-digest/time") {
+      if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+      let from;
+      let to;
+      try {
+        from = requireDate(url.searchParams.get("from") ?? "", "from");
+        to = requireDate(url.searchParams.get("to") ?? "", "to");
+      } catch {
+        throw new HttpError(400, "AGENT_TIME_INVALID", "日期范围无效");
+      }
+      if (from > to) throw new HttpError(400, "AGENT_TIME_INVALID", "日期范围无效");
+      return sendJson(response, 200, readAgentTime(from, to));
     }
 
     if (url.pathname === "/api/agent-digest/turns") {
