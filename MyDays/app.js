@@ -35,14 +35,17 @@ const ROUTES = Object.freeze({
     heading: "回顾一段时间，看见持续的进展",
     copy: "按周、月、季度或年度整理成果，并为下一阶段留下清晰的方向。",
   },
-  "/ai-settings": {
+  "/settings": {
     key: "ai-settings",
-    title: "MyDays · AI 设置",
-    eyebrow: "AI CONNECTIONS",
-    heading: "连接你的 AI 服务",
-    copy: "安全配置第三方 OpenAI 或 Claude 兼容服务。",
+    title: "MyDays · 设置",
+    eyebrow: "SETTINGS",
+    heading: "设置",
+    copy: "外观、项目、待办习惯、AI 服务和 Agent 工作汇总。",
   },
 });
+
+// Old links to /ai-settings land on the AI tab of the settings page.
+const ROUTE_ALIASES = Object.freeze({ "/ai-settings": ["/settings", "ai"] });
 
 const PERIODS = Object.freeze({
   week: { reviewLabel: "周度" },
@@ -127,8 +130,11 @@ const elements = {
   searchResults: document.querySelector("#search-results"),
   searchFooter: document.querySelector("#search-footer"),
   importFile: document.querySelector("#import-file"),
-  menuExportButton: document.querySelector("#menu-export-button"),
-  menuImportButton: document.querySelector("#menu-import-button"),
+  settingsExportButton: document.querySelector("#settings-export-button"),
+  settingsImportButton: document.querySelector("#settings-import-button"),
+  settingsTabs: [...document.querySelectorAll("[data-settings-tab]")],
+  settingsPanels: [...document.querySelectorAll("[data-settings-panel]")],
+  taskSettingsMore: document.querySelector("#task-settings-more"),
   accountMenuButton: document.querySelector("#account-menu-button"),
   accountMenu: document.querySelector("#account-menu"),
   logoutButton: document.querySelector("#logout-button"),
@@ -249,13 +255,10 @@ const elements = {
   aiPromptState: document.querySelector("#ai-prompt-state"),
   aiPromptReset: document.querySelector("#ai-prompt-reset"),
   aiPromptSave: document.querySelector("#ai-prompt-save"),
-  projectDialog: document.querySelector("#project-dialog"),
-  projectDialogClose: document.querySelector("#project-dialog-close"),
-  projectDialogDone: document.querySelector("#project-dialog-done"),
   projectAddForm: document.querySelector("#project-add-form"),
   projectNewName: document.querySelector("#project-new-name"),
   projectOptionList: document.querySelector("#project-option-list"),
-  projectDialogState: document.querySelector("#project-dialog-state"),
+  projectState: document.querySelector("#project-state"),
 };
 
 const defaultState = {
@@ -372,7 +375,7 @@ function renderAgentDigest({ fillForm = false } = {}) {
     elements.agentDigestInstructions.value = settings.instructions;
     elements.agentDigestState.textContent = agentDigest.providerReady
       ? "设置已载入"
-      : "开启前需要先在上方配置带 API Key 的 AI 服务";
+      : "开启前需要先在「AI 服务」中配置带 API Key 的服务";
   }
   const zone = browserTimeZone();
   elements.agentDigestTimezoneHint.textContent = elements.agentDigestTimezone.value === zone ? "与当前浏览器一致" : `当前浏览器时区：${zone}`;
@@ -935,7 +938,42 @@ function normalizePath(pathname) {
 }
 
 function resolveRoute(pathname) {
+  const alias = ROUTE_ALIASES[normalizePath(pathname)];
+  if (alias) {
+    window.history.replaceState({}, "", `${alias[0]}#${alias[1]}`);
+    return ROUTES[alias[0]];
+  }
   return ROUTES[normalizePath(pathname)] ?? ROUTES["/"];
+}
+
+const SETTINGS_TABS = ["general", "ai", "agent", "connect"];
+
+function currentSettingsTab() {
+  const tab = window.location.hash.slice(1);
+  return SETTINGS_TABS.includes(tab) ? tab : "general";
+}
+
+function renderSettingsTabs() {
+  const active = currentSettingsTab();
+  elements.settingsTabs.forEach((tab) => {
+    const selected = tab.dataset.settingsTab === active;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  elements.settingsPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.settingsPanel !== active;
+  });
+}
+
+function selectSettingsTab(tab, { focus = false } = {}) {
+  window.history.replaceState({}, "", `/settings#${tab}`);
+  renderSettingsTabs();
+  if (focus) elements.settingsTabs.find((entry) => entry.dataset.settingsTab === tab)?.focus();
+}
+
+function openSettings(tab) {
+  navigateTo(`/settings#${tab}`);
 }
 
 function fromDateKey(key) {
@@ -1075,18 +1113,14 @@ function renderProjectManager() {
   `).join("");
 }
 
-function openProjectDialog() {
+function openProjectSettings() {
   closeCaptureSelects();
-  renderProjectManager();
-  elements.projectDialog.hidden = false;
-  elements.projectDialogState.textContent = "";
-  elements.projectNewName.focus();
-}
-
-function closeProjectDialog() {
-  if (elements.projectDialog.hidden) return;
-  elements.projectDialog.hidden = true;
-  elements.projectSelect.closest("[data-capture-select]").querySelector(".capture-select-trigger").focus();
+  elements.projectState.textContent = "";
+  openSettings("general");
+  window.requestAnimationFrame(() => {
+    elements.projectNewName.scrollIntoView({ block: "center" });
+    elements.projectNewName.focus({ preventScroll: true });
+  });
 }
 
 function renderRoute() {
@@ -1099,6 +1133,11 @@ function renderRoute() {
     else item.removeAttribute("aria-current");
   });
   const settingsActive = currentRoute.key === "ai-settings";
+  if (settingsActive) {
+    renderSettingsTabs();
+    renderTaskSettings();
+    renderProjectManager();
+  }
   elements.settingsLink.classList.toggle("active", settingsActive);
   if (settingsActive) elements.settingsLink.setAttribute("aria-current", "page");
   else elements.settingsLink.removeAttribute("aria-current");
@@ -2639,7 +2678,7 @@ async function generateAiSummary() {
   } catch (error) {
     elements.summaryReviewState.textContent = "AI 周报生成失败，原内容未改变";
     if (["AI_DEFAULT_PROVIDER_MISSING", "AI_KEY_MISSING", "AI_KEY_UNREADABLE", "AI_MODEL_MISSING"].includes(error.code)) {
-      showToast(`${error.message}，请前往 AI 设置`);
+      showToast(`${error.message}，请前往「设置 → AI 服务」`);
     } else {
       showToast(`AI 周报生成失败：${error.message}`);
     }
@@ -2749,7 +2788,7 @@ async function addProjectOption(event) {
   event.preventDefault();
   const name = elements.projectNewName.value.trim();
   if (!name) {
-    elements.projectDialogState.textContent = "请输入项目名称。";
+    elements.projectState.textContent = "请输入项目名称。";
     elements.projectNewName.focus();
     return;
   }
@@ -2760,9 +2799,9 @@ async function addProjectOption(event) {
     renderCaptureProjectOptions(result.selected);
     renderProjectChoices();
     renderProjectManager();
-    elements.projectDialogState.textContent = `已添加“${result.selected}”`;
+    elements.projectState.textContent = `已添加“${result.selected}”`;
   } catch (error) {
-    elements.projectDialogState.textContent = error.message;
+    elements.projectState.textContent = error.message;
   }
 }
 
@@ -2785,10 +2824,10 @@ async function renameProjectOption(row) {
     renderCaptureProjectOptions(selectedProject === currentName ? result.selected : selectedProject);
     renderProjectChoices();
     renderProjectManager();
-    elements.projectDialogState.textContent = `已将“${currentName}”重命名为“${result.selected}”；历史记录未修改。`;
+    elements.projectState.textContent = `已将“${currentName}”重命名为“${result.selected}”；历史记录未修改。`;
   } catch (error) {
     row.querySelector("input").value = currentName;
-    elements.projectDialogState.textContent = error.message;
+    elements.projectState.textContent = error.message;
   } finally {
     if (row.isConnected) delete row.dataset.saving;
   }
@@ -2806,9 +2845,9 @@ async function moveProjectOption(name, offset) {
     renderCaptureProjectOptions();
     renderProjectChoices();
     renderProjectManager();
-    elements.projectDialogState.textContent = "项目顺序已保存";
+    elements.projectState.textContent = "项目顺序已保存";
   } catch (error) {
-    elements.projectDialogState.textContent = error.message;
+    elements.projectState.textContent = error.message;
   }
 }
 
@@ -2820,9 +2859,9 @@ async function removeProjectOption(name) {
     renderCaptureProjectOptions();
     renderProjectChoices();
     renderProjectManager();
-    elements.projectDialogState.textContent = `已删除“${name}”选项；历史记录未修改。`;
+    elements.projectState.textContent = `已删除“${name}”选项；历史记录未修改。`;
   } catch (error) {
-    elements.projectDialogState.textContent = error.message;
+    elements.projectState.textContent = error.message;
   }
 }
 
@@ -3114,7 +3153,7 @@ async function polishCapture() {
   } catch (error) {
     if (requestVersion !== capturePolishRequestVersion) return;
     if (["AI_DEFAULT_PROVIDER_MISSING", "AI_KEY_MISSING", "AI_KEY_UNREADABLE", "AI_MODEL_MISSING"].includes(error.code)) {
-      showToast(`${error.message}，请前往 AI 设置`);
+      showToast(`${error.message}，请前往「设置 → AI 服务」`);
     } else {
       showToast(`AI 润色失败：${error.message}`);
     }
@@ -3197,14 +3236,16 @@ function moveCaptureOptionFocus(root, offset) {
   options[nextIndex]?.focus();
 }
 
-function navigateTo(pathname, { replace = false } = {}) {
+function navigateTo(target, { replace = false } = {}) {
+  const [pathname, hash = ""] = target.split("#");
   const normalizedPath = normalizePath(pathname);
   const nextRoute = ROUTES[normalizedPath];
   if (!nextRoute) return;
   closeSummaryExportMenu();
   closeCaptureSelects();
-  if (replace) window.history.replaceState({}, "", normalizedPath);
-  else window.history.pushState({}, "", normalizedPath);
+  const url = hash ? `${normalizedPath}#${hash}` : normalizedPath;
+  if (replace) window.history.replaceState({}, "", url);
+  else window.history.pushState({}, "", url);
   currentRoute = nextRoute;
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -3732,7 +3773,7 @@ elements.captureSelects.forEach((root) => {
   menu.addEventListener("click", (event) => {
     const manageButton = event.target.closest("[data-manage-projects]");
     if (manageButton) {
-      openProjectDialog();
+      openProjectSettings();
       return;
     }
     const option = event.target.closest(".capture-select-option");
@@ -3766,11 +3807,6 @@ elements.captureSelects.forEach((root) => {
 });
 
 elements.projectAddForm.addEventListener("submit", addProjectOption);
-elements.projectDialogClose.addEventListener("click", closeProjectDialog);
-elements.projectDialogDone.addEventListener("click", closeProjectDialog);
-elements.projectDialog.addEventListener("click", (event) => {
-  if (event.target === elements.projectDialog) closeProjectDialog();
-});
 elements.projectOptionList.addEventListener("change", (event) => {
   const input = event.target.closest(".project-option-row input");
   if (input) renameProjectOption(input.closest(".project-option-row"));
@@ -3944,17 +3980,29 @@ elements.recurrenceList.addEventListener("click", (event) => {
   if (remove) deleteRecurrence(remove.dataset.recurrenceDelete);
 });
 elements.exportButton.addEventListener("click", () => exportData());
-elements.menuExportButton.addEventListener("click", () => {
-  setAccountMenu(false);
-  exportData();
-});
+elements.settingsExportButton.addEventListener("click", () => exportData());
 const chooseBackupFile = () => {
   setAccountMenu(false);
   elements.importFile.value = "";
   elements.importFile.click();
 };
 elements.importButton.addEventListener("click", chooseBackupFile);
-elements.menuImportButton.addEventListener("click", chooseBackupFile);
+elements.settingsImportButton.addEventListener("click", chooseBackupFile);
+elements.settingsTabs.forEach((tab, index) => {
+  tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
+  tab.addEventListener("keydown", (event) => {
+    const offset = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
+    if (!offset) return;
+    event.preventDefault();
+    const next = elements.settingsTabs[(index + offset + elements.settingsTabs.length) % elements.settingsTabs.length];
+    selectSettingsTab(next.dataset.settingsTab, { focus: true });
+  });
+});
+elements.taskSettingsMore.addEventListener("click", (event) => {
+  event.preventDefault();
+  elements.taskSettingsDialog.close();
+  openSettings("general");
+});
 elements.importFile.addEventListener("change", () => importBackupFile(elements.importFile.files[0]));
 if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) elements.searchShortcut.textContent = "Ctrl K";
 elements.searchTrigger.addEventListener("click", openSearch);
@@ -4183,13 +4231,11 @@ window.addEventListener("popstate", () => {
   render();
   window.scrollTo({ top: 0 });
 });
+window.addEventListener("hashchange", () => {
+  if (currentRoute.key === "ai-settings") renderSettingsTabs();
+});
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !elements.projectDialog.hidden) {
-    event.preventDefault();
-    closeProjectDialog();
-    return;
-  }
   if (event.key === "Escape" && !elements.summaryExportMenu.hidden) {
     event.preventDefault();
     closeSummaryExportMenu({ restoreFocus: true });

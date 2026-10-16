@@ -76,7 +76,7 @@ async function callTool(name, args) {
   const tool = TOOLS.find((entry) => entry.name === name);
   if (!tool) return { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] };
   if (!token) {
-    return { isError: true, content: [{ type: "text", text: "MYDAYS_TOKEN is not set. Create a read token in MyDays (AI 设置 → Agent 工作汇总 → 采集器与读取令牌)." }] };
+    return { isError: true, content: [{ type: "text", text: "MYDAYS_TOKEN is not set. Create a read token in MyDays (设置 → 连接与令牌)." }] };
   }
   try {
     const response = await fetch(`${url}${tool.path(args ?? {})}`, {

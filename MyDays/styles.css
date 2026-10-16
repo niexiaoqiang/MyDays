@@ -6488,3 +6488,391 @@ p > .origin-chip:first-child {
 .task-panel .panel-header h2 {
   white-space: nowrap;
 }
+
+/* Settings page: tabbed layout */
+.settings-shell {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-tab {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.settings-tab svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.settings-tab:hover {
+  color: var(--ink);
+  background: var(--hover-tint);
+}
+
+.settings-tab.active {
+  color: var(--green-dark);
+  background: var(--green-soft);
+}
+
+.settings-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.settings-panel {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.settings-panel[hidden] {
+  display: none;
+}
+
+.settings-panel .ai-prompt-panel {
+  margin-top: 0;
+}
+
+.settings-card {
+  padding: 24px 26px;
+}
+
+.settings-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.settings-card-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.settings-card-head p {
+  max-width: 640px;
+  margin: 6px 0 0;
+  color: var(--muted-light);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.settings-card-head .switch {
+  flex: none;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.settings-row:last-child {
+  padding-bottom: 0;
+}
+
+.settings-row strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.settings-row > :last-child {
+  flex: none;
+}
+
+.settings-row button[hidden] {
+  display: none;
+}
+
+.settings-theme-switch button {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.settings-subheading {
+  margin: 26px 0 4px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.settings-hint {
+  margin: 0 0 14px;
+  color: var(--muted-light);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.settings-state {
+  display: block;
+  min-height: 18px;
+  margin-top: 8px;
+  color: var(--muted-light);
+  font-size: 12px;
+}
+
+.settings-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-card .project-add-form {
+  padding: 0 0 12px;
+}
+
+.settings-card .project-option-list {
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.settings-card .project-option-empty {
+  min-height: 80px;
+}
+
+.settings-card .agent-digest-subtitle {
+  margin-top: 18px;
+}
+
+.agent-digest-storage > div {
+  display: flex;
+  gap: 4px;
+}
+
+.ai-provider-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-provider-panel-actions .soft-button {
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.settings-steps {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.settings-steps li {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding-left: 34px;
+  counter-increment: step;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-steps li::before {
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--green-dark);
+  background: var(--green-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settings-steps strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.settings-steps code:not(.settings-code) {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-container-high);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.settings-code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  background: var(--surface-container-high);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.task-settings-more {
+  align-self: flex-start;
+  padding: 0;
+  text-decoration: none;
+}
+
+@media (max-width: 900px) {
+  .settings-shell {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .settings-nav {
+    position: static;
+    display: flex;
+    gap: 4px;
+    margin: 0 -16px;
+    padding: 0 16px 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-tab {
+    flex: none;
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .settings-tab svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (max-width: 720px) {
+  .settings-card {
+    padding: 20px 18px;
+  }
+
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .settings-row > :last-child {
+    align-self: flex-start;
+  }
+
+  .settings-theme-switch {
+    width: 100%;
+  }
+
+  .agent-digest-storage {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .settings-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+    margin: 0;
+    padding: 3px;
+    border-radius: var(--radius-md);
+    background: var(--surface-container-high);
+    overflow: visible;
+  }
+
+  .settings-tab {
+    justify-content: center;
+    min-width: 0;
+    padding: 0 4px;
+    font-size: 12.5px;
+  }
+
+  .settings-tab svg {
+    display: none;
+  }
+
+  .settings-tab.active {
+    color: var(--ink);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+}
+
+.settings-card .project-option-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 4px 0;
+  border-radius: var(--radius-md);
+}
+
+.settings-card .project-option-row:hover {
+  background: transparent;
+}
+
+.settings-card .project-option-row input {
+  min-height: 40px;
+  border-radius: var(--radius-md);
+}
+
+.settings-card .project-option-actions {
+  grid-column: auto;
+  gap: 2px;
+}
+
+.settings-card .project-option-actions button {
+  min-width: 32px;
+  padding: 0 6px;
+}

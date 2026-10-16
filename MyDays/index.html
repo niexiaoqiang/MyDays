@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=32" />
+    <link rel="stylesheet" href="/styles.css?v=35" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -78,24 +78,17 @@
         <dialog class="achievements-dialog task-settings-dialog" id="task-settings-dialog" aria-labelledby="task-settings-title">
           <div class="achievements-head">
             <div>
-              <p class="section-kicker">TODO SETTINGS</p>
-              <h2 id="task-settings-title">重复待办与提醒</h2>
+              <p class="section-kicker">RECURRING</p>
+              <h2 id="task-settings-title">重复待办</h2>
               <p>重复待办会在当天自动出现在列表里；错过的不会补到之后的日子。</p>
             </div>
             <button class="icon-button" id="task-settings-close" type="button" aria-label="关闭">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
             </button>
           </div>
-          <div class="task-setting-row">
-            <div><strong>未完成待办自动顺延</strong><p>之前日期没完成的待办会移到今天，并标出已顺延几天。重复待办不顺延。</p></div>
-            <label class="switch"><input type="checkbox" id="task-rollover" role="switch" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="task-rollover-label">已开启</span></label>
-          </div>
-          <div class="task-setting-row">
-            <div><strong>浏览器提醒</strong><p id="task-notify-state">设置了提醒的待办到时会弹出系统通知。只在 MyDays 页面开着时提醒（放在后台标签页也可以）。</p></div>
-            <button class="soft-button" id="task-notify-enable" type="button">允许通知</button>
-          </div>
           <h3 class="agent-digest-subtitle">重复待办 <span class="count-badge" id="recurrence-count">0</span></h3>
           <div class="recurrence-list" id="recurrence-list"></div>
+          <a class="text-button task-settings-more" href="/settings#general" id="task-settings-more">自动顺延与浏览器提醒设置 →</a>
         </dialog>
         <dialog class="achievements-dialog" id="achievements-dialog" aria-labelledby="achievements-title">
           <div class="achievements-head">
@@ -209,9 +202,9 @@
               <button class="avatar" id="account-menu-button" type="button" aria-label="打开账户菜单" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">MY</button>
               <div class="account-menu" id="account-menu" role="menu" hidden>
                 <div class="account-menu-heading"><strong>MyDays</strong><span>个人工作台</span></div>
-                <a class="account-menu-item settings" id="ai-settings-link" href="/ai-settings" data-route="ai-settings" role="menuitem">
+                <a class="account-menu-item settings" id="ai-settings-link" href="/settings" data-route="ai-settings" role="menuitem">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v1.2a6 6 0 0 1 2.8 1.6L19 8l2 3.5-1.2.7a6 6 0 0 1 0 3.6l1.2.7L19 20l-1.2-.8a6 6 0 0 1-2.8 1.6V22H9v-1.2a6 6 0 0 1-2.8-1.6L5 20l-2-3.5 1.2-.7a6 6 0 0 1 0-3.6L3 11.5 5 8l1.2.8A6 6 0 0 1 9 7.2V6a3 3 0 0 1 3-3Z"/><circle cx="12" cy="14" r="2.5"/></svg>
-                  AI 设置
+                  设置
                 </a>
                 <div class="account-menu-theme" role="group" aria-labelledby="theme-switch-label">
                   <span id="theme-switch-label">主题</span>
@@ -221,15 +214,7 @@
                     <button type="button" data-theme-option="dark" aria-pressed="false">深色</button>
                   </div>
                 </div>
-                <button class="account-menu-item settings" id="menu-export-button" type="button" role="menuitem">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
-                  导出数据备份
-                </button>
-                <button class="account-menu-item settings" id="menu-import-button" type="button" role="menuitem">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 20h14"/></svg>
-                  导入数据备份
-                </button>
-                <button class="account-menu-item" id="logout-button" type="button" role="menuitem" hidden>
+                                                <button class="account-menu-item" id="logout-button" type="button" role="menuitem" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6v14h4M14 8l4 4-4 4M9 12h9"/></svg>
                   退出登录
                 </button>
@@ -416,7 +401,7 @@
                     <button class="filter-tab" type="button" data-filter="open">进行中</button>
                     <button class="filter-tab" type="button" data-filter="done">已完成</button>
                   </div>
-                  <button class="icon-button task-settings-button" id="task-settings-open" type="button" aria-label="重复待办与提醒设置" title="重复待办与提醒" aria-haspopup="dialog" aria-controls="task-settings-dialog">
+                  <button class="icon-button task-settings-button" id="task-settings-open" type="button" aria-label="管理重复待办" title="重复待办" aria-haspopup="dialog" aria-controls="task-settings-dialog">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/></svg>
                   </button>
                 </div>
@@ -626,23 +611,88 @@
           <section class="ai-settings-page" id="ai-settings-page" aria-labelledby="ai-settings-title">
             <div class="ai-settings-hero">
               <div>
-                <p class="eyebrow">AI CONNECTIONS</p>
-                <h1 id="ai-settings-title">连接你的 AI 服务</h1>
-                <p>集中管理 OpenAI 或 Claude 兼容服务。API Key 会在服务端加密保存，页面不会再次读取明文。</p>
+                <p class="eyebrow">SETTINGS</p>
+                <h1 id="ai-settings-title">设置</h1>
+                <p>外观、项目、待办习惯、AI 服务和 Agent 工作汇总都在这里。</p>
               </div>
-              <button class="primary-button" id="ai-new-provider" type="button">添加 AI 服务</button>
             </div>
 
-            <div class="ai-settings-layout">
-              <section class="panel ai-provider-panel" aria-labelledby="ai-provider-list-title">
+            <div class="settings-shell">
+              <nav class="settings-nav" role="tablist" aria-label="设置分类">
+                <button class="settings-tab" type="button" role="tab" id="settings-tab-general" aria-controls="settings-panel-general" data-settings-tab="general">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+                  <span>通用</span>
+                </button>
+                <button class="settings-tab" type="button" role="tab" id="settings-tab-ai" aria-controls="settings-panel-ai" data-settings-tab="ai">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3ZM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
+                  <span>AI 服务</span>
+                </button>
+                <button class="settings-tab" type="button" role="tab" id="settings-tab-agent" aria-controls="settings-panel-agent" data-settings-tab="agent">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/><path d="M9 10h6"/></svg>
+                  <span>Agent 汇总</span>
+                </button>
+                <button class="settings-tab" type="button" role="tab" id="settings-tab-connect" aria-controls="settings-panel-connect" data-settings-tab="connect">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4a4 4 0 0 0-3.9 4.9L4 15v3h3v-2h2v-2h2l1.1-1.1A4 4 0 1 0 14 4Z"/><circle cx="15" cy="8" r="1"/></svg>
+                  <span>连接与令牌</span>
+                </button>
+              </nav>
+
+              <div class="settings-panels">
+                <div class="settings-panel" id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" data-settings-panel="general">
+                  <section class="panel settings-card" aria-labelledby="settings-appearance-title">
+                    <div class="settings-card-head"><div><h2 id="settings-appearance-title">外观</h2><p>只保存在当前浏览器。</p></div></div>
+                    <div class="settings-row">
+                      <div><strong>主题</strong><p>跟随系统时会随电脑的浅色 / 深色模式切换。</p></div>
+                      <div class="theme-switch settings-theme-switch" role="group" aria-label="主题">
+                        <button type="button" data-theme-option="system" aria-pressed="true">跟随系统</button>
+                        <button type="button" data-theme-option="light" aria-pressed="false">浅色</button>
+                        <button type="button" data-theme-option="dark" aria-pressed="false">深色</button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="panel settings-card" aria-labelledby="settings-tasks-title">
+                    <div class="settings-card-head"><div><h2 id="settings-tasks-title">待办</h2><p>重复待办在待办列表右上角的循环图标里管理。</p></div></div>
+                    <div class="settings-row">
+                      <div><strong>未完成待办自动顺延</strong><p>之前日期没完成的待办会移到今天，并标出已顺延几天。重复待办不顺延。</p></div>
+                      <label class="switch"><input type="checkbox" id="task-rollover" role="switch" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="task-rollover-label">已开启</span></label>
+                    </div>
+                    <div class="settings-row">
+                      <div><strong>浏览器提醒</strong><p id="task-notify-state">设置了提醒的待办到时会弹出系统通知。</p></div>
+                      <button class="soft-button" id="task-notify-enable" type="button">允许通知</button>
+                    </div>
+                  </section>
+
+                  <section class="panel settings-card" aria-labelledby="settings-projects-title">
+                    <div class="settings-card-head"><div><h2 id="settings-projects-title">项目</h2><p>显示在记录区的项目下拉框中；改名或删除不会改写历史记录。</p></div></div>
+                    <form class="project-add-form" id="project-add-form">
+          <label for="project-new-name">新增项目</label>
+          <div><input id="project-new-name" maxlength="80" autocomplete="off" placeholder="输入新的项目名称" /><button class="primary-button" type="submit">添加项目</button></div>
+        </form>
+                    <div class="project-option-list" id="project-option-list"></div>
+                    <span class="settings-state" id="project-state" role="status" aria-live="polite"></span>
+                  </section>
+
+                  <section class="panel settings-card" aria-labelledby="settings-data-title">
+                    <div class="settings-card-head"><div><h2 id="settings-data-title">数据备份</h2><p>JSON 备份包含待办、记录、笔记、复盘和周期汇报，不含 AI 服务、项目选项和 Agent 汇总的设置。完整备份请备份 Docker 数据卷。</p></div></div>
+                    <div class="settings-actions-row">
+                      <button class="soft-button" id="settings-export-button" type="button">导出备份</button>
+                      <button class="soft-button" id="settings-import-button" type="button">导入备份…</button>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="settings-panel" id="settings-panel-ai" role="tabpanel" aria-labelledby="settings-tab-ai" data-settings-panel="ai" hidden>
+                  <div class="ai-settings-layout">
+                    <section class="panel ai-provider-panel" aria-labelledby="ai-provider-list-title">
                 <div class="panel-header compact">
                   <div><p class="section-kicker">PROVIDERS</p><h2 id="ai-provider-list-title">服务列表</h2></div>
-                  <span class="count-badge" id="ai-provider-count">0</span>
+                  <div class="ai-provider-panel-actions"><span class="count-badge" id="ai-provider-count">0</span><button class="soft-button" id="ai-new-provider" type="button">添加</button></div>
                 </div>
                 <div class="ai-provider-list" id="ai-provider-list"></div>
               </section>
 
-              <section class="panel ai-provider-editor" aria-labelledby="ai-editor-title">
+                    <section class="panel ai-provider-editor" aria-labelledby="ai-editor-title">
                 <div class="ai-editor-heading">
                   <div><p class="section-kicker">CONFIGURATION</p><h2 id="ai-editor-title">添加 AI 服务</h2></div>
                   <span class="ai-security-chip">服务端加密</span>
@@ -672,47 +722,78 @@
                   </div>
                 </form>
               </section>
-            </div>
-            <section class="panel ai-prompt-panel" aria-labelledby="ai-prompt-title">
+                  </div>
+                  <section class="panel ai-prompt-panel" aria-labelledby="ai-prompt-title">
               <div class="ai-editor-heading">
-                <div><p class="section-kicker">SUMMARY PREFERENCE</p><h2 id="ai-prompt-title">AI 总结偏好</h2><p>描述你希望 AI 如何组织、侧重和表达复盘内容。固定输出格式与安全要求仍由 MyDays 控制。</p></div>
+                <div><p class="section-kicker">SUMMARY PREFERENCE</p><h2 id="ai-prompt-title">AI 周报偏好</h2><p>生成周报、月报时的写作偏好。固定输出格式与安全要求仍由 MyDays 控制。</p></div>
                 <span class="ai-security-chip" id="ai-prompt-mode">默认</span>
               </div>
-              <label class="ai-field"><span>提示词撮要</span><textarea id="ai-summary-prompt" maxlength="4000" placeholder="例如：突出客户价值、风险和下周可执行事项。"></textarea><small id="ai-prompt-count">0 / 4000</small></label>
+              <label class="ai-field"><span>偏好说明</span><textarea id="ai-summary-prompt" maxlength="4000" placeholder="例如：突出客户价值、风险和下周可执行事项。"></textarea><small id="ai-prompt-count">0 / 4000</small></label>
               <div class="ai-prompt-actions">
                 <span id="ai-prompt-state" role="status" aria-live="polite">正在读取设置…</span>
                 <div><button class="soft-button" id="ai-prompt-reset" type="button">恢复默认</button><button class="primary-button" id="ai-prompt-save" type="button">保存偏好</button></div>
               </div>
             </section>
-            <section class="panel ai-prompt-panel agent-digest-panel" aria-labelledby="agent-digest-title">
-              <div class="ai-editor-heading">
-                <div><p class="section-kicker">AGENT DIGEST</p><h2 id="agent-digest-title">Agent 工作汇总</h2><p>每天自动把你在 Claude Code、Codex 中完成的工作整理成几条主要工作，写入时间线。</p></div>
-                <label class="switch"><input type="checkbox" id="agent-digest-enabled" role="switch" aria-describedby="agent-digest-notice" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="agent-digest-enabled-label">已关闭</span></label>
-              </div>
-              <p class="agent-digest-notice" id="agent-digest-notice">开启后，采集器只读取会话中你的提问和 agent 每轮的最终答复（不含工具输出），常见形态的密钥会被隐藏但无法保证完全。这些摘录在 MyDays 中暂存 30 天，并在每天整理时发送给下方选择的 AI 服务。</p>
-              <div class="ai-form-grid agent-digest-form">
-                <label class="ai-field"><span>每天整理时间</span><input id="agent-digest-time" type="time" required /></label>
-                <label class="ai-field"><span>一天从几点算起</span><div class="ai-input-suffix"><input id="agent-digest-day-start" type="number" min="0" max="12" step="1" /><span>点</span></div><small>这个时间之前的工作算作前一天。</small></label>
-                <label class="ai-field"><span>时区</span><input id="agent-digest-timezone" maxlength="64" autocomplete="off" spellcheck="false" /><small id="agent-digest-timezone-hint"></small></label>
-                <label class="ai-field"><span>使用的 AI 服务</span><select id="agent-digest-provider"></select></label>
-                <label class="ai-field"><span>每日输入上限</span><div class="ai-input-suffix"><input id="agent-digest-max-input" type="number" min="5000" max="200000" step="1000" /><span>字</span></div><small>超出时自动压缩素材，用来控制模型开销。</small></label>
-                <label class="ai-field"><span>排除的项目</span><input id="agent-digest-excluded" maxlength="2000" autocomplete="off" placeholder="目录名，用逗号分隔" /><small>这些目录下的会话不会进入汇总。</small></label>
-                <label class="ai-field ai-field-wide"><span>Git 仓库目录（可选）</span><textarea id="agent-digest-git-dirs" class="agent-digest-git-dirs" maxlength="3200" rows="2" spellcheck="false" placeholder="~/code&#10;/Users/me/work"></textarea><small>每行一个，最多 10 个；会在目录下三层内查找仓库。使用 Docker 时目录需在主目录内（或启动时用 MYDAYS_GIT_ROOT 指定的目录内）。</small></label>
-                <div class="agent-git-status ai-field-wide" id="agent-git-status" aria-live="polite" hidden></div>
-                <label class="ai-field ai-field-wide"><span>Git 作者邮箱</span><input id="agent-digest-git-emails" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="you@example.com，多个用逗号分隔" /><small>只采集这些邮箱的提交，只读取提交说明和改动规模，不读取代码内容。不填写时不扫描仓库。</small></label>
-                <label class="ai-field ai-field-wide"><span>整理偏好（可选）</span><textarea id="agent-digest-instructions" maxlength="2000" placeholder="例如：把调研和排查类工作也单独列出。"></textarea></label>
-              </div>
-              <div class="ai-prompt-actions">
-                <span id="agent-digest-state" role="status" aria-live="polite">正在读取设置…</span>
-                <div><button class="soft-button" id="agent-digest-refresh" type="button">刷新状态</button><button class="primary-button" id="agent-digest-save" type="button">保存设置</button></div>
-              </div>
-              <h3 class="agent-digest-subtitle">最近 8 天</h3>
-              <div class="agent-digest-days" id="agent-digest-days" role="table" aria-label="最近 8 天的整理状态"></div>
-              <div class="agent-digest-storage"><span id="agent-digest-stored"></span><button class="text-button danger-text" id="agent-digest-clear" type="button">清除已采集素材</button></div>
-              <h3 class="agent-digest-subtitle">采集器与读取令牌</h3>
-              <p class="agent-digest-help">MyDays 和 agent 在同一台电脑时，在项目目录执行 <code>docker compose --profile agent-digest up -d</code> 启动随附的采集器，无需手动配置令牌。在其他电脑上采集时，创建一个令牌并用 <code>MYDAYS_URL</code>、<code>MYDAYS_TOKEN</code> 运行 <code>node collector/collector.mjs</code>。要纳入 Git 提交，在上方填写仓库目录和作者邮箱，采集器下一轮（约 5 分钟内）生效。</p>
-              <p class="agent-digest-help">让 agent 读取 MyDays：创建一个“读取”令牌，然后在 Claude Code 中执行 <code>claude mcp add mydays -e MYDAYS_URL=http://localhost:4173 -e MYDAYS_TOKEN=令牌 -- node MyDays项目目录/collector/mcp.mjs</code>；Codex 在 <code>~/.codex/config.toml</code> 的 <code>[mcp_servers.mydays]</code> 中配置同样的命令和环境变量。之后就可以问 agent“我上周做了什么”“帮我写本月周报”。读取令牌能看到全部待办、记录、笔记、复盘和周期汇报，但不能修改。</p>
-              <form class="agent-token-form" id="agent-token-form">
+                </div>
+
+                <div class="settings-panel" id="settings-panel-agent" role="tabpanel" aria-labelledby="settings-tab-agent" data-settings-panel="agent" hidden>
+                  <section class="panel settings-card agent-digest-panel" aria-labelledby="agent-digest-title">
+                    <div class="settings-card-head">
+                      <div><h2 id="agent-digest-title">Agent 工作汇总</h2><p>每天把你在 Claude Code、Codex 里完成的工作和本人的 Git 提交，整理成几条主要工作写入时间线。</p></div>
+                      <label class="switch"><input type="checkbox" id="agent-digest-enabled" role="switch" aria-describedby="agent-digest-notice" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="agent-digest-enabled-label">已关闭</span></label>
+                    </div>
+                    <p class="agent-digest-notice" id="agent-digest-notice">开启后，采集器只读取会话中你的提问和 agent 每轮的最终答复（不含工具输出），常见形态的密钥会被隐藏但无法保证完全。这些摘录在 MyDays 中暂存 30 天，并在每天整理时发送给你选择的 AI 服务。</p>
+                    <h3 class="agent-digest-subtitle">最近 8 天</h3>
+                    <div class="agent-digest-days" id="agent-digest-days" role="table" aria-label="最近 8 天的整理状态"></div>
+                    <div class="agent-digest-storage"><span id="agent-digest-stored"></span><div><button class="text-button" id="agent-digest-refresh" type="button">刷新状态</button><button class="text-button danger-text" id="agent-digest-clear" type="button">清除已采集素材</button></div></div>
+                  </section>
+
+                  <section class="panel settings-card" aria-labelledby="agent-rules-title">
+                    <div class="settings-card-head"><div><h2 id="agent-rules-title">整理规则</h2><p>什么时候整理、用哪个 AI、整理成什么样。</p></div></div>
+                    <div class="ai-form-grid agent-digest-form">
+                      <label class="ai-field"><span>每天整理时间</span><input id="agent-digest-time" type="time" required /></label>
+                      <label class="ai-field"><span>一天从几点算起</span><div class="ai-input-suffix"><input id="agent-digest-day-start" type="number" min="0" max="12" step="1" /><span>点</span></div><small>这个时间之前的工作算作前一天。</small></label>
+                      <label class="ai-field"><span>时区</span><input id="agent-digest-timezone" maxlength="64" autocomplete="off" spellcheck="false" /><small id="agent-digest-timezone-hint"></small></label>
+                      <label class="ai-field"><span>使用的 AI 服务</span><select id="agent-digest-provider"></select></label>
+                      <label class="ai-field"><span>每日输入上限</span><div class="ai-input-suffix"><input id="agent-digest-max-input" type="number" min="5000" max="200000" step="1000" /><span>字</span></div><small>超出时自动压缩素材，用来控制模型开销。</small></label>
+                      <label class="ai-field"><span>排除的项目</span><input id="agent-digest-excluded" maxlength="2000" autocomplete="off" placeholder="目录名，用逗号分隔" /><small>这些目录下的会话不会进入汇总。</small></label>
+                      <label class="ai-field ai-field-wide"><span>整理偏好（可选）</span><textarea id="agent-digest-instructions" maxlength="2000" placeholder="例如：把调研和排查类工作也单独列出。"></textarea></label>
+                    </div>
+                    <h3 class="settings-subheading" id="agent-sources-title">数据来源 · Git 提交</h3>
+                    <p class="settings-hint">Claude Code、Codex 的会话由采集器自动发现；Git 提交需要指定仓库目录和你的作者邮箱。</p>
+                    <div class="ai-form-grid agent-digest-form">
+                      <label class="ai-field ai-field-wide"><span>仓库目录</span><textarea id="agent-digest-git-dirs" class="agent-digest-git-dirs" maxlength="3200" rows="2" spellcheck="false" placeholder="~/code&#10;/Users/me/work"></textarea><small>每行一个，最多 10 个；会在目录下三层内查找仓库。使用 Docker 时目录需在主目录内（或启动时用 MYDAYS_GIT_ROOT 指定的目录内）。</small></label>
+                      <label class="ai-field ai-field-wide"><span>Git 作者邮箱</span><input id="agent-digest-git-emails" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="you@example.com，多个用逗号分隔" /><small>只采集这些邮箱的提交，只读取提交说明和改动规模，不读取代码内容。不填写时不扫描仓库。</small></label>
+                      <div class="agent-git-status ai-field-wide" id="agent-git-status" aria-live="polite" hidden></div>
+                    </div>
+                    <div class="ai-prompt-actions">
+                      <span id="agent-digest-state" role="status" aria-live="polite">正在读取设置…</span>
+                      <div><button class="primary-button" id="agent-digest-save" type="button">保存设置</button></div>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="settings-panel" id="settings-panel-connect" role="tabpanel" aria-labelledby="settings-tab-connect" data-settings-panel="connect" hidden>
+                  <section class="panel settings-card" aria-labelledby="connect-collector-title">
+                    <div class="settings-card-head"><div><h2 id="connect-collector-title">采集器</h2><p>把 agent 会话推送给 MyDays，是 Agent 工作汇总的素材来源。</p></div></div>
+                    <ol class="settings-steps">
+                      <li><strong>和 MyDays 在同一台电脑</strong><span>在项目目录启动随附的采集器，令牌自动发放，无需配置：</span><code class="settings-code">docker compose --profile agent-digest up -d</code></li>
+                      <li><strong>在其他电脑上</strong><span>在下方创建一个“采集”令牌，然后在那台电脑上运行（需要 Node.js 24）：</span><code class="settings-code">MYDAYS_URL=http://MyDays地址:4173 MYDAYS_TOKEN=令牌 node collector/collector.mjs</code></li>
+                    </ol>
+                  </section>
+
+                  <section class="panel settings-card" aria-labelledby="connect-mcp-title">
+                    <div class="settings-card-head"><div><h2 id="connect-mcp-title">让 agent 读取 MyDays</h2><p>接入后可以直接问 agent “我上周做了什么”“帮我写本月周报”。只读，不能修改数据。</p></div></div>
+                    <ol class="settings-steps">
+                      <li><strong>创建读取令牌</strong><span>在下方选择“读取”创建，把令牌保存到 <code>~/.mydays/mcp-read-token</code>。</span></li>
+                      <li><strong>Claude Code</strong><code class="settings-code">claude mcp add --scope user mydays -e MYDAYS_URL=http://localhost:4173 -e MYDAYS_TOKEN_FILE=$HOME/.mydays/mcp-read-token -- node MyDays项目目录/collector/mcp.mjs</code></li>
+                      <li><strong>Codex</strong><span>在 <code>~/.codex/config.toml</code> 的 <code>[mcp_servers.mydays]</code> 中配置同样的命令和环境变量。</span></li>
+                    </ol>
+                  </section>
+
+                  <section class="panel settings-card" aria-labelledby="connect-tokens-title">
+                    <div class="settings-card-head"><div><h2 id="connect-tokens-title">令牌</h2><p>采集令牌只能推送素材，读取令牌只能查询；两者互不越权。吊销后立即失效。</p></div></div>
+                    <form class="agent-token-form" id="agent-token-form">
                 <input id="agent-token-name" maxlength="60" autocomplete="off" placeholder="令牌名称，例如：办公室电脑" aria-label="令牌名称" required />
                 <select id="agent-token-scope" aria-label="令牌用途">
                   <option value="ingest">采集：推送会话素材</option>
@@ -725,7 +806,10 @@
                 <div><code id="agent-token-value"></code><button class="soft-button" id="agent-token-copy" type="button">复制</button></div>
               </div>
               <div class="agent-token-list" id="agent-token-list"></div>
-            </section>
+                  </section>
+                </div>
+              </div>
+            </div>
           </section>
 
           <footer class="page-footer">
@@ -738,20 +822,6 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <div class="dialog-backdrop" id="project-dialog" hidden>
-      <section class="project-dialog-card" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
-        <div class="project-dialog-heading">
-          <div><p class="section-kicker">PROJECT OPTIONS</p><h2 id="project-dialog-title">管理项目选项</h2><p>这些项目会显示在记录区下拉框中；修改选项不会改写历史记录。</p></div>
-          <button class="icon-button" id="project-dialog-close" type="button" aria-label="关闭项目管理"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
-        </div>
-        <form class="project-add-form" id="project-add-form">
-          <label for="project-new-name">新增项目</label>
-          <div><input id="project-new-name" maxlength="80" autocomplete="off" placeholder="输入新的项目名称" /><button class="primary-button" type="submit">添加项目</button></div>
-        </form>
-        <div class="project-option-list" id="project-option-list"></div>
-        <div class="project-dialog-footer"><span id="project-dialog-state" role="status" aria-live="polite"></span><button class="soft-button" id="project-dialog-done" type="button">完成</button></div>
-      </section>
-    </div>
 
     <template id="empty-task-template">
       <div class="empty-state">
@@ -773,6 +843,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=34"></script>
+    <script src="/app.js?v=35"></script>
   </body>
 </html>

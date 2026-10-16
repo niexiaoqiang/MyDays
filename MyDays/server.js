@@ -129,6 +129,7 @@ const STATIC_FILES = new Map([
   ["/review", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/summary", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/ai-settings", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
+  ["/settings", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/login", { file: "login.html", type: "text/html; charset=utf-8", cache: "no-store" }],
   ["/theme.js", { file: "theme.js", type: "application/javascript; charset=utf-8", cache: "no-cache" }],
   ["/login.js", { file: "login.js", type: "application/javascript; charset=utf-8", cache: "no-store" }],
@@ -1496,7 +1497,7 @@ function periodReportPrompt(snapshot, promptExcerpt) {
 
 async function runDefaultAiTextTask({ systemPrompt, userPrompt, parseResult, maxTokens, provider: selectedProvider = null, minTimeoutMs = AI_TEXT_TASK_MIN_TIMEOUT_MS }) {
   const provider = selectedProvider ?? statements.readDefaultAiProvider.get();
-  if (!provider) throw new HttpError(400, "AI_DEFAULT_PROVIDER_MISSING", "请先在 AI 设置中配置默认服务");
+  if (!provider) throw new HttpError(400, "AI_DEFAULT_PROVIDER_MISSING", "请先在「设置 → AI 服务」中配置默认服务");
   if (!provider.model?.trim()) throw new HttpError(400, "AI_MODEL_MISSING", "默认 AI 服务还没有配置模型");
   const apiKey = decryptApiKey(provider);
   const resolvedUserPrompt = typeof userPrompt === "function" ? userPrompt() : userPrompt;

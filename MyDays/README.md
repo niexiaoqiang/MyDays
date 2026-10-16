@@ -21,7 +21,7 @@ docker compose up -d --build
 - 工作时间线：<http://localhost:4173/timeline>
 - 今日复盘：<http://localhost:4173/review>
 - 周期汇总：<http://localhost:4173/summary>
-- AI 设置：<http://localhost:4173/ai-settings>
+- 设置：<http://localhost:4173/settings>
 
 首次启动会自动创建 SQLite 数据库。数据库位于容器的 `/app/data/mydays.db`，并通过名为 `mydays_data` 的 Docker 卷持久化。执行 `docker compose down`、重启或重建容器都不会删除这个卷。
 
@@ -137,7 +137,7 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 
 ### 开启步骤
 
-1. 在右上角 MY → AI 设置中，先配置一个带 API Key 的 AI 服务。
+1. 在右上角 MY → 设置 → AI 服务中，先配置一个带 API Key 的 AI 服务。
 2. 在同一页面的「Agent 工作汇总」里打开开关，确认时区和整理时间。
 3. MyDays 和 agent 在同一台电脑时，启动随附的采集器：
 
@@ -147,7 +147,7 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 
    它默认以只读方式挂载 `~/.claude/projects` 和 `~/.codex/sessions`，令牌由 MyDays 自动发放。目录不在默认位置时，用 `MYDAYS_CLAUDE_DIR`、`MYDAYS_CODEX_DIR` 指定。
 
-   想把本人的 Git 提交也纳入整理，在设置页填写“Git 仓库目录”（每行一个，向下查找三层）和 Git 作者邮箱，采集器下一轮生效，设置页会显示每个目录找到了几个仓库。采集器只读取这些邮箱提交的提交说明和改动规模，不读取代码内容；提交不计入 AI 协作时间。
+   想把本人的 Git 提交也纳入整理，在「设置 → Agent 汇总」填写“仓库目录”（每行一个，向下查找三层）和 Git 作者邮箱，采集器下一轮生效，设置页会显示每个目录找到了几个仓库。采集器只读取这些邮箱提交的提交说明和改动规模，不读取代码内容；提交不计入 AI 协作时间。
 
    Docker 中的采集器会把你的主目录只读挂载进去，因此仓库目录需要在主目录内。想缩小或改变可见范围，启动时用 `MYDAYS_GIT_ROOT` 指定：
 
@@ -155,7 +155,7 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
    MYDAYS_GIT_ROOT=~/code docker compose --profile agent-digest up -d --build
    ```
 
-4. agent 在另一台电脑上时，在设置页创建一个令牌，然后在那台电脑上运行（需要 Node.js 24）：
+4. agent 在另一台电脑上时，在「设置 → 连接与令牌」创建一个令牌，然后在那台电脑上运行（需要 Node.js 24）：
 
    ```bash
    MYDAYS_URL=https://mydays.example.com MYDAYS_TOKEN=mdk_xxx node collector/collector.mjs
@@ -171,7 +171,7 @@ node collector/collector.mjs --dry-run
 
 MyDays 提供一个只读的 MCP 服务，Claude Code、Codex 等 agent 接入后可以直接查询你的记录，例如“我上周做了什么”“帮我写本月周报”“上次 WebSocket 断线是怎么处理的”。它提供三个工具：搜索记录、读取某天或某段日期的记录（最多 31 天）、读取某个周 / 月 / 季 / 年的概览（指标、成果、未完成事项、AI 协作时间、已保存的周报）。
 
-1. 在设置页的“采集器与读取令牌”中创建一个用途为“读取”的令牌。
+1. 在「设置 → 连接与令牌」中创建一个用途为“读取”的令牌。
 2. 在 Claude Code 中注册（需要本机安装 Node.js 24）：
 
    ```bash

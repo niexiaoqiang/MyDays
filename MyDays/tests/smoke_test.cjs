@@ -685,7 +685,7 @@ function readStoredZipEntries(buffer) {
   await page.locator("#account-menu-button").click();
   if (!(await page.locator("#ai-settings-link").isVisible())) throw new Error("账户菜单中没有 AI 设置入口");
   await page.locator("#ai-settings-link").click();
-  if (new URL(page.url()).pathname !== "/ai-settings" || !(await page.locator("#ai-settings-page").isVisible())) {
+  if (new URL(page.url()).pathname !== "/settings" || !(await page.locator("#ai-settings-page").isVisible())) {
     throw new Error("AI 设置独立页面路由失败");
   }
   if (!(await page.locator(".topbar").isVisible()) || !(await page.locator("#account-menu-button").isVisible())) {
@@ -717,7 +717,7 @@ function readStoredZipEntries(buffer) {
       modifiedClickPrevented,
     };
   });
-  if (settingsStructure.href !== "/ai-settings" || !settingsStructure.parentIsAccountMenu) {
+  if (settingsStructure.href !== "/settings" || !settingsStructure.parentIsAccountMenu) {
     throw new Error("AI 设置入口不是用户菜单中的独立真实链接");
   }
   if (settingsStructure.modifiedClickPrevented !== false) throw new Error("AI 设置入口错误拦截了修饰键点击");

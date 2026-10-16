@@ -73,22 +73,22 @@ async function waitForServer() {
 
     const loginPageResponse = await fetch(`${baseUrl}/login`);
     assert.equal(loginPageResponse.status, 200, "/login 应返回登录页面");
-    assert.match(await loginPageResponse.text(), /styles\.css\?v=32/);
+    assert.match(await loginPageResponse.text(), /styles\.css\?v=35/);
 
-    for (const route of ["/", "/tasks", "/timeline", "/review", "/summary", "/ai-settings", "/tasks/"]) {
+    for (const route of ["/", "/tasks", "/timeline", "/review", "/summary", "/settings", "/ai-settings", "/tasks/"]) {
       const pageResponse = await fetch(`${baseUrl}${route}`);
       assert.equal(pageResponse.status, 200, `${route} 应返回应用页面`);
       const pageHtml = await pageResponse.text();
       assert.match(pageHtml, /data-route="today"/);
-      assert.match(pageHtml, /styles\.css\?v=32/);
-      assert.match(pageHtml, /app\.js\?v=34/);
+      assert.match(pageHtml, /styles\.css\?v=35/);
+      assert.match(pageHtml, /app\.js\?v=35/);
       assert.match(pageHtml, /id="summary-export-trigger"[^>]+aria-haspopup="menu"[^>]+aria-expanded="false"/);
       assert.match(pageHtml, /id="summary-export-menu" role="menu"/);
       assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="markdown"/);
       assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="excel"/);
       assert.doesNotMatch(pageHtml, /id="summary-export-(markdown|excel)"/);
     }
-    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=34`);
+    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=35`);
     assert.equal(appScriptResponse.headers.get("cache-control"), "no-cache", "应用脚本必须重新验证，避免容器升级后继续使用旧版本");
     const appScript = await appScriptResponse.text();
     assert.match(appScript, /renderItemActions/);
@@ -97,7 +97,7 @@ async function waitForServer() {
     assert.match(appScript, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
     assert.match(appScript, /closeSummaryExportMenu/);
     assert.match(appScript, /moveSummaryExportFocus/);
-    const stylesheetResponse = await fetch(`${baseUrl}/styles.css?v=32`);
+    const stylesheetResponse = await fetch(`${baseUrl}/styles.css?v=35`);
     assert.equal(stylesheetResponse.headers.get("cache-control"), "no-cache", "应用样式必须重新验证，避免与旧脚本混用");
     const stylesheet = await stylesheetResponse.text();
     assert.match(stylesheet, /\.item-action/);
