@@ -40,7 +40,6 @@ const AI_POLISH_TASK_MAX_TOKENS = 512;
 const AI_TEXT_TASK_MIN_TIMEOUT_MS = 60000;
 const DEFAULT_AI_SUMMARY_PROMPT_EXCERPT = "请生成简洁、具体、忠于事实的中文工作复盘，突出可验证的成果、实际阻碍和可执行的下一步。优先使用易编辑的短段落或项目符号，不要虚构未提供的信息。";
 const AI_SECRET_PATH = path.join(DATA_DIR, ".ai-config-secret");
-const COLLECTOR_TOKEN_PATH = path.join(DATA_DIR, ".collector-token");
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const AI_ALLOW_PROXY_FAKE_IP = process.env.AI_ALLOW_PROXY_FAKE_IP === "1";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -2583,7 +2582,6 @@ const agentStatements = {
     FROM agent_tokens ORDER BY revoked_at IS NOT NULL, created_at DESC
   `),
   readTokenByHash: database.prepare("SELECT id, scope FROM agent_tokens WHERE token_hash = ? AND revoked_at IS NULL"),
-  readBuiltinToken: database.prepare("SELECT id FROM agent_tokens WHERE builtin = 1 AND revoked_at IS NULL"),
   countActiveTokens: database.prepare("SELECT COUNT(*) AS count FROM agent_tokens WHERE revoked_at IS NULL"),
   insertToken: database.prepare(`
     INSERT INTO agent_tokens(id, name, token_hash, token_prefix, builtin, scope, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2771,7 +2769,7 @@ function saveAgentDigestSettings(input) {
     next.gitAuthorEmails = [...new Set(input.gitAuthorEmails.map((email) => email.trim().toLowerCase()))];
   }
   if (input.gitRepoDirs !== undefined) {
-    // Host paths as the user sees them; the collector maps them into its own view of the filesystem.
+    // Paths on the machine running the collector; "~" is expanded there.
     if (!Array.isArray(input.gitRepoDirs) || input.gitRepoDirs.length > 10
       || input.gitRepoDirs.some((dir) => typeof dir !== "string" || dir.trim().length > 300
         || !/^(?:~(?:\/|$)|\/|[A-Za-z]:[\\/])/.test(dir.trim()) || /[\0\n]/.test(dir))) {
@@ -2795,7 +2793,6 @@ function saveAgentDigestSettings(input) {
     JSON.stringify(next.gitRepoDirs),
     new Date().toISOString(),
   );
-  if (next.enabled) ensureBuiltinCollectorToken();
   return readAgentDigestSettings();
 }
 
@@ -2816,13 +2813,13 @@ function projectAgentToken(row) {
   };
 }
 
-function issueAgentToken(name, { builtin = false, scope = "ingest" } = {}) {
+function issueAgentToken(name, scope) {
   if (agentStatements.countActiveTokens.get().count >= MAX_ACTIVE_AGENT_TOKENS) {
     throw new HttpError(400, "AGENT_TOKEN_LIMIT", `最多保留 ${MAX_ACTIVE_AGENT_TOKENS} 个有效令牌，请先吊销不用的令牌`);
   }
   const token = `mdk_${randomBytes(32).toString("base64url")}`;
   const id = randomUUID();
-  agentStatements.insertToken.run(id, name, hashAgentToken(token), token.slice(0, 12), builtin ? 1 : 0, scope, new Date().toISOString());
+  agentStatements.insertToken.run(id, name, hashAgentToken(token), token.slice(0, 12), 0, scope, new Date().toISOString());
   return { id, token };
 }
 
@@ -2834,28 +2831,9 @@ function createAgentToken(input) {
   }
   const scope = input.scope ?? "ingest";
   if (scope !== "ingest" && scope !== "read") throw new HttpError(400, "AGENT_TOKEN_INVALID_INPUT", "令牌用途无效");
-  const { id, token } = issueAgentToken(name, { scope });
+  const { id, token } = issueAgentToken(name, scope);
   const row = agentStatements.listTokens.all().find((entry) => entry.id === id);
   return { token, ...projectAgentToken(row) };
-}
-
-// The bundled collector container reads this file from the shared data volume, so enabling the feature needs no manual token handling.
-function ensureBuiltinCollectorToken() {
-  try {
-    if (agentStatements.readBuiltinToken.get() && readFileSync(COLLECTOR_TOKEN_PATH, "utf8").trim()) return;
-  } catch (error) {
-    if (error.code !== "ENOENT") console.error(`Collector token file unreadable: ${error.code}`);
-  }
-  const now = new Date().toISOString();
-  const existing = agentStatements.readBuiltinToken.get();
-  if (existing) agentStatements.revokeToken.run(now, existing.id);
-  try {
-    const { token } = issueAgentToken("本机采集器", { builtin: true });
-    writeFileSync(COLLECTOR_TOKEN_PATH, `${token}\n`, { encoding: "utf8", mode: 0o600 });
-    chmodSync(COLLECTOR_TOKEN_PATH, 0o600);
-  } catch (error) {
-    console.error(`Collector token could not be provisioned: ${error.code ?? error.message}`);
-  }
 }
 
 function authenticateAgentRequest(request) {
@@ -3108,7 +3086,7 @@ function agentDigestStatus() {
   };
 }
 
-const COLLECTOR_GIT_STATES = ["ok", "missing", "outside-mount", "no-emails"];
+const COLLECTOR_GIT_STATES = ["ok", "missing", "no-emails"];
 
 function saveCollectorStatus(input) {
   const invalid = () => new HttpError(400, "AGENT_COLLECTOR_STATUS_INVALID", "采集器状态格式无效");

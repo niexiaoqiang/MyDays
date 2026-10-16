@@ -15,35 +15,6 @@ services:
       - mydays_data:/app/data
     restart: unless-stopped
 
-  # Optional: reads local AI agent session files for the "Agent 工作汇总" feature.
-  # Start it with: docker compose --profile agent-digest up -d
-  collector:
-    image: mydays:local
-    profiles: ["agent-digest"]
-    command: ["node", "collector/collector.mjs"]
-    depends_on:
-      - mydays
-    environment:
-      MYDAYS_URL: http://mydays:3000
-      MYDAYS_TOKEN_FILE: /app/data/.collector-token
-      CLAUDE_PROJECTS_DIR: /sources/claude
-      CODEX_SESSIONS_DIR: /sources/codex
-      # Git directories are chosen in MyDays settings; they must sit under MYDAYS_GIT_ROOT (default: your home folder).
-      GIT_HOST_ROOT: ${MYDAYS_GIT_ROOT:-${HOME}}
-      GIT_MOUNT_DIR: /sources/home
-      HOST_HOME: ${HOME}
-      COLLECTOR_STATE_DIR: /state
-    volumes:
-      - mydays_data:/app/data:ro
-      - ${MYDAYS_CLAUDE_DIR:-~/.claude/projects}:/sources/claude:ro
-      - ${MYDAYS_CODEX_DIR:-~/.codex/sessions}:/sources/codex:ro
-      # Read-only. Only the directories listed in MyDays settings are scanned, and only commit messages are read.
-      - ${MYDAYS_GIT_ROOT:-${HOME}}:/sources/home:ro
-      - collector_state:/state
-    healthcheck:
-      disable: true
-    restart: unless-stopped
-
 secrets:
   mydays_access_password:
     file: ./secrets/mydays_access_password.txt
@@ -51,4 +22,3 @@ secrets:
 volumes:
   mydays_data:
     name: "${MYDAYS_VOLUME:-mydays_data}"
-  collector_state:
