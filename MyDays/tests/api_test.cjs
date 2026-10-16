@@ -80,14 +80,14 @@ async function waitForServer() {
       const pageHtml = await pageResponse.text();
       assert.match(pageHtml, /data-route="today"/);
       assert.match(pageHtml, /styles\.css\?v=29/);
-      assert.match(pageHtml, /app\.js\?v=30/);
+      assert.match(pageHtml, /app\.js\?v=31/);
       assert.match(pageHtml, /id="summary-export-trigger"[^>]+aria-haspopup="menu"[^>]+aria-expanded="false"/);
       assert.match(pageHtml, /id="summary-export-menu" role="menu"/);
       assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="markdown"/);
       assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="excel"/);
       assert.doesNotMatch(pageHtml, /id="summary-export-(markdown|excel)"/);
     }
-    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=30`);
+    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=31`);
     assert.equal(appScriptResponse.headers.get("cache-control"), "no-cache", "应用脚本必须重新验证，避免容器升级后继续使用旧版本");
     const appScript = await appScriptResponse.text();
     assert.match(appScript, /renderItemActions/);

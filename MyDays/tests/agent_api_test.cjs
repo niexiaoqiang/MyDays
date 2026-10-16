@@ -138,7 +138,7 @@ async function digestLogs(date) {
     result = await agent(token, "/api/agent/unknown");
     assert.equal(result.response.status, 404);
 
-    for (const body of [{ summaryTime: "25:00" }, { timezone: "Mars/Olympus" }, { dayStartHour: 13 }, { maxInputChars: 10 }, { providerId: "missing" }, { excludedProjects: [""] }]) {
+    for (const body of [{ summaryTime: "25:00" }, { timezone: "Mars/Olympus" }, { dayStartHour: 13 }, { maxInputChars: 10 }, { providerId: "missing" }, { excludedProjects: [""] }, { gitAuthorEmails: ["not-an-email"] }, { gitAuthorEmails: Array.from({ length: 11 }, (_, index) => `a${index}@b.c`) }]) {
       result = await request("/api/agent-digest/settings", { method: "PUT", body: JSON.stringify(body) });
       assert.equal(result.response.status, 400, JSON.stringify(body));
       assert.equal(result.body.error.code, "AGENT_DIGEST_SETTINGS_INVALID");
@@ -151,11 +151,14 @@ async function digestLogs(date) {
     });
     assert.equal(result.response.status, 200);
     assert.equal(result.body.enabled, true);
+    result = await request("/api/agent-digest/settings", { method: "PUT", body: JSON.stringify({ gitAuthorEmails: [" Me@Example.com ", "me@example.com"] }) });
+    assert.deepEqual(result.body.gitAuthorEmails, ["me@example.com"], "邮箱应去空格、转小写并去重");
     const builtinToken = fs.readFileSync(path.join(dataDir, ".collector-token"), "utf8").trim();
     assert.match(builtinToken, /^mdk_/);
     assert.equal(fs.statSync(path.join(dataDir, ".collector-token")).mode & 0o777, 0o600);
     result = await agent(builtinToken, "/api/agent/config");
     assert.equal(result.body.enabled, true, "本机采集器令牌必须可用");
+    assert.deepEqual(result.body.gitAuthorEmails, ["me@example.com"], "采集器需要拿到 Git 作者邮箱");
 
     const today = dateKey(0);
     const yesterday = dateKey(1);
@@ -273,13 +276,14 @@ async function digestLogs(date) {
       turn(5, { project: "甲", sessionId: "time-a", startedAt: at("10:20"), endedAt: at("10:30") }),
       turn(5, { project: "甲", sessionId: "time-a", startedAt: at("13:00"), endedAt: at("13:01") }),
       turn(5, { project: "乙", sessionId: "time-b", agent: "codex", startedAt: at("10:05"), endedAt: at("10:25") }),
+      turn(5, { project: "甲", sessionId: "git:甲", agent: "git", startedAt: at("16:00"), endedAt: at("16:00"), prompt: "提交：完成时间统计", reply: "" }),
     ]);
-    assert.deepEqual(result.body, { accepted: 4 });
+    assert.deepEqual(result.body, { accepted: 5 });
     const time = await waitFor(async () => {
       const { body } = await request(`/api/agent-digest/time?from=${timeDate}&to=${timeDate}`);
       return body.totalMinutes ? body : null;
     }, "time estimate");
-    assert.equal(time.totalMinutes, 35, "并行的项目在总时长中只计一次，短于 5 分钟的段按 5 分钟计");
+    assert.equal(time.totalMinutes, 35, "并行的项目在总时长中只计一次，短于 5 分钟的段按 5 分钟计，代码提交不计入时长");
     assert.deepEqual(time.byProject, [{ project: "甲", minutes: 35 }, { project: "乙", minutes: 20 }]);
     assert.deepEqual(time.byDay, [{ date: timeDate, minutes: 35 }]);
     for (const query of ["from=bad&to=2026-01-01", `from=${today}&to=${yesterday}`]) {
@@ -341,7 +345,7 @@ async function digestLogs(date) {
     assert.equal(aiCalls.length, callsWhenDisabled, "关闭后不得再调用模型");
 
     result = await request("/api/agent-digest/turns", { method: "DELETE" });
-    assert.equal(result.body.deleted, 22);
+    assert.equal(result.body.deleted, 23);
     const exported = JSON.stringify((await request("/api/state")).body);
     assert.equal(exported.includes("mdk_"), false);
     assert.equal(exported.includes("agent_turns"), false);

@@ -3,11 +3,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { createServer } = require("node:http");
+const { execFileSync } = require("node:child_process");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mydays-collector-"));
 const claudeDir = path.join(root, "claude");
 const codexDir = path.join(root, "codex");
 const stateDir = path.join(root, "state");
+const gitDir = path.join(root, "code");
 const port = 43191;
 const now = Date.now();
 const at = (minutesAgo) => new Date(now - minutesAgo * 60000).toISOString();
@@ -58,6 +60,18 @@ writeLines(path.join(codexDir, "2026", "01", "02", "rollout-desktop.jsonl"), [
 writeLines(path.join(codexDir, "2026", "10", "01", "rollout-sub.jsonl"), [codexMeta({ subagent: { other: "guardian" } }), codexUserItem(20, "子代理会话不应出现")]);
 writeLines(path.join(codexDir, "2026", "10", "01", "rollout-exec.jsonl"), [codexMeta("exec"), codexUserItem(20, "程序化调用不应出现")]);
 
+// A real repository with one commit by the user and one by someone else.
+const repo = path.join(gitDir, "group", "webapp");
+fs.mkdirSync(repo, { recursive: true });
+const git = (args, env = {}) => execFileSync("git", args, { cwd: repo, env: { ...process.env, ...env }, stdio: "pipe" });
+git(["init", "-q"]);
+fs.writeFileSync(path.join(repo, "app.js"), "console.log(1);\n");
+git(["add", "."]);
+git(["commit", "-q", "-m", "实现首页搜索", "-m", "顺带修复样式。password=supersecretvalue"], { GIT_AUTHOR_NAME: "Me", GIT_AUTHOR_EMAIL: "me@example.com", GIT_COMMITTER_NAME: "Me", GIT_COMMITTER_EMAIL: "me@example.com" });
+git(["commit", "-q", "--allow-empty", "-m", "别人的提交不应出现"], { GIT_AUTHOR_NAME: "Other", GIT_AUTHOR_EMAIL: "other@example.com", GIT_COMMITTER_NAME: "Other", GIT_COMMITTER_EMAIL: "other@example.com" });
+fs.mkdirSync(path.join(gitDir, "node_modules", "dep", ".git", "logs"), { recursive: true });
+fs.writeFileSync(path.join(gitDir, "node_modules", "dep", ".git", "logs", "HEAD"), "");
+
 const received = [];
 let serverMode = "ok";
 let enabled = true;
@@ -71,7 +85,7 @@ const server = createServer((request, response) => {
       return response.end(JSON.stringify({ error: { code: "AGENT_TOKEN_INVALID" } }));
     }
     if (request.url === "/api/agent/config") {
-      return response.end(JSON.stringify({ enabled, maxPromptChars: 600, maxReplyChars: 1500, windowDays: 8 }));
+      return response.end(JSON.stringify({ enabled, maxPromptChars: 600, maxReplyChars: 1500, windowDays: 8, gitAuthorEmails: ["me@example.com"] }));
     }
     if (serverMode === "fail") {
       response.statusCode = 500;
@@ -98,6 +112,7 @@ const server = createServer((request, response) => {
       MYDAYS_TOKEN: "mdk_test-token",
       CLAUDE_PROJECTS_DIR: claudeDir,
       CODEX_SESSIONS_DIR: codexDir,
+      GIT_REPOS_DIR: gitDir,
       COLLECTOR_STATE_DIR: stateDir,
     };
     const logs = [];
@@ -135,6 +150,14 @@ const server = createServer((request, response) => {
     assert.deepEqual(codexTurns.map((turn) => turn.project), ["blog", "docs"]);
     assert.equal(codexTurns[1].reply, "部署文档已更新。");
     assert.equal(codexTurns.every((turn) => turn.sessionId === "codex-vscode"), true);
+    const gitTurns = received.filter((turn) => turn.agent === "git");
+    assert.equal(gitTurns.length, 1, "只采集本人的提交，并跳过 node_modules 中的仓库");
+    assert.equal(gitTurns[0].prompt, "实现首页搜索");
+    assert.equal(gitTurns[0].project, "webapp");
+    assert.equal(gitTurns[0].sessionId, "git:webapp");
+    assert.match(gitTurns[0].turnKey, /^[0-9a-f]{40}$/);
+    assert.equal(gitTurns[0].reply, "顺带修复样式。password=[已隐藏] （1 个文件，+1 -0）");
+    assert.equal(gitTurns[0].startedAt, gitTurns[0].endedAt);
     assert.equal(received.every((turn) => !Number.isNaN(Date.parse(turn.startedAt)) && turn.endedAt >= turn.startedAt), true);
 
     received.length = 0;
@@ -153,9 +176,12 @@ const server = createServer((request, response) => {
     assert.equal(logs.join("\n").includes("购物车"), false, "日志中不得出现会话内容");
 
     const stats = await collector.scan(config);
-    assert.deepEqual(stats.map((stat) => [stat.agent, stat.turns]), [["claude-code", 3], ["codex", 2]]);
+    assert.deepEqual(stats.map((stat) => [stat.agent, stat.turns]), [["claude-code", 3], ["codex", 2]], "没有作者邮箱时不采集 Git 提交");
+    const withEmails = await collector.scan(collector.readConfig({ ...env, GIT_AUTHOR_EMAILS: "Me@Example.com" }));
+    assert.deepEqual(withEmails.map((stat) => [stat.agent, stat.turns]), [["claude-code", 3], ["codex", 2], ["git", 1]]);
     assert.equal(stats[0].unreadableLines, 1);
     assert.deepEqual(collector.adaptersFor(collector.readConfig({ ...env, CODEX_SESSIONS_DIR: path.join(root, "nope") })).map((adapter) => adapter.name), ["claude-code"], "不存在的目录对应的适配器必须跳过");
+    assert.deepEqual(collector.parseGitLog("\x1eabc\x1f2026-10-16T10:00:00+08:00\x1f只有标题\x1f\n", "/repos/x").map((turn) => turn.reply), [""]);
 
     console.log("MyDays collector test passed");
   } finally {

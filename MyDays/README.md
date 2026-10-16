@@ -142,6 +142,12 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 
    它默认以只读方式挂载 `~/.claude/projects` 和 `~/.codex/sessions`，令牌由 MyDays 自动发放。目录不在默认位置时，用 `MYDAYS_CLAUDE_DIR`、`MYDAYS_CODEX_DIR` 指定。
 
+   想把本人的 Git 提交也纳入整理，启动时用 `MYDAYS_GIT_DIR` 指定存放仓库的目录（向下查找三层），并在设置页填写 Git 作者邮箱。采集器只读取这些邮箱提交的提交说明和改动规模，不读取代码内容；提交不计入 AI 协作时间。
+
+   ```bash
+   MYDAYS_GIT_DIR=~/code docker compose --profile agent-digest up -d --build
+   ```
+
 4. agent 在另一台电脑上时，在设置页创建一个令牌，然后在那台电脑上运行（需要 Node.js 24）：
 
    ```bash

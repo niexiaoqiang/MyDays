@@ -130,6 +130,7 @@ const elements = {
   agentDigestProvider: document.querySelector("#agent-digest-provider"),
   agentDigestMaxInput: document.querySelector("#agent-digest-max-input"),
   agentDigestExcluded: document.querySelector("#agent-digest-excluded"),
+  agentDigestGitEmails: document.querySelector("#agent-digest-git-emails"),
   agentDigestInstructions: document.querySelector("#agent-digest-instructions"),
   agentDigestState: document.querySelector("#agent-digest-state"),
   agentDigestRefresh: document.querySelector("#agent-digest-refresh"),
@@ -330,6 +331,7 @@ function renderAgentDigest({ fillForm = false } = {}) {
     elements.agentDigestTimezone.value = settings.updatedAt ? settings.timezone : browserTimeZone();
     elements.agentDigestMaxInput.value = settings.maxInputChars;
     elements.agentDigestExcluded.value = settings.excludedProjects.join("，");
+    elements.agentDigestGitEmails.value = (settings.gitAuthorEmails ?? []).join("，");
     elements.agentDigestInstructions.value = settings.instructions;
     elements.agentDigestState.textContent = agentDigest.providerReady
       ? "设置已载入"
@@ -385,6 +387,7 @@ function readAgentDigestForm() {
     providerId: elements.agentDigestProvider.value || null,
     maxInputChars: Number(elements.agentDigestMaxInput.value),
     excludedProjects: elements.agentDigestExcluded.value.split(/[,，\n]/).map((name) => name.trim()).filter(Boolean),
+    gitAuthorEmails: elements.agentDigestGitEmails.value.split(/[,，\s]+/).map((email) => email.trim()).filter(Boolean),
     instructions: elements.agentDigestInstructions.value,
   };
 }

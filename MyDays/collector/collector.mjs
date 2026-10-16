@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // MyDays collector: reads local AI agent session files and pushes trimmed, redacted turns to a MyDays server.
 // It has no dependencies and never sends tool calls, tool output, or thinking content.
+import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import os from "node:os";
@@ -22,6 +23,8 @@ export function readConfig(env = process.env) {
     tokenFile: env.MYDAYS_TOKEN_FILE ?? "",
     claudeDir: env.CLAUDE_PROJECTS_DIR ?? path.join(home, ".claude", "projects"),
     codexDir: env.CODEX_SESSIONS_DIR ?? path.join(home, ".codex", "sessions"),
+    gitDir: env.GIT_REPOS_DIR ?? "",
+    gitAuthorEmails: (env.GIT_AUTHOR_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean),
     stateDir: env.COLLECTOR_STATE_DIR ?? path.join(home, ".mydays", "collector"),
     intervalSeconds: Math.max(10, Number.parseInt(env.COLLECTOR_INTERVAL_SECONDS ?? "300", 10) || 300),
   };
@@ -195,6 +198,72 @@ function listCodexFiles(dir, depth = 0) {
   return files;
 }
 
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "vendor", "dist", "build", "target", ".venv", "venv"]);
+
+// A repository is recognised by .git/logs/HEAD, whose modification time changes whenever HEAD moves (commit, checkout,
+// pull). Returning that file lets the generic scan skip repositories that have not changed since the last round.
+function listGitRepos(dir, depth = 0) {
+  if (!dir) return [];
+  const head = path.join(dir, ".git", "logs", "HEAD");
+  if (existsSync(head)) return [head];
+  if (depth >= 3) return [];
+  const found = [];
+  for (const entry of safeReaddir(dir)) {
+    if (entry.isDirectory() && !entry.name.startsWith(".") && !SKIPPED_DIRECTORIES.has(entry.name)) {
+      found.push(...listGitRepos(path.join(dir, entry.name), depth + 1));
+    }
+  }
+  return found;
+}
+
+function escapeGitPattern(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+let gitUnavailableReported = false;
+
+export function parseGitLog(output, repoPath) {
+  const turns = [];
+  for (const record of output.split("\x1e")) {
+    if (!record.trim()) continue;
+    const [hash, date, subject, rest = ""] = record.replace(/^\n+/, "").split("\x1f");
+    if (!hash || !date || !subject) continue;
+    const stat = /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/.exec(rest);
+    const body = rest.replace(/\n\s*\d+ files? changed[\s\S]*$/, "").trim();
+    const size = stat ? `（${stat[1]} 个文件，+${stat[2] ?? 0} -${stat[3] ?? 0}）` : "";
+    turns.push({
+      agent: "git",
+      sessionId: `git:${path.basename(repoPath)}`,
+      turnKey: hash.trim(),
+      cwd: repoPath,
+      startedAt: date.trim(),
+      endedAt: date.trim(),
+      prompt: subject.trim(),
+      reply: `${body}${body && size ? " " : ""}${size}`.trim(),
+    });
+  }
+  return turns;
+}
+
+function gitAdapterParse(authorEmails, windowDays) {
+  return async (headFile) => {
+    const repoPath = path.dirname(path.dirname(path.dirname(headFile)));
+    const since = new Date(Date.now() - windowDays * 86400000).toISOString();
+    const result = spawnSync("git", [
+      "-c", "safe.directory=*", "-C", repoPath, "log", "--all", "--no-merges", `--since=${since}`,
+      ...authorEmails.map((email) => `--author=<${escapeGitPattern(email)}>`),
+      "--format=%x1e%H%x1f%aI%x1f%s%x1f%b", "--shortstat",
+    ], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 20000 });
+    if (result.error?.code === "ENOENT") {
+      if (!gitUnavailableReported) console.log(`${new Date().toISOString()} git is not installed; skipping Git repositories`);
+      gitUnavailableReported = true;
+      return { turns: [], skipped: 0 };
+    }
+    if (result.status !== 0) return { turns: [], skipped: 1 };
+    return { turns: parseGitLog(result.stdout, repoPath), skipped: 0 };
+  };
+}
+
 function safeReaddir(dir) {
   try {
     return readdirSync(dir, { withFileTypes: true });
@@ -203,11 +272,14 @@ function safeReaddir(dir) {
   }
 }
 
-export function adaptersFor(config) {
+export function adaptersFor(config, limits = DEFAULT_LIMITS) {
+  const authorEmails = config.gitAuthorEmails.length ? config.gitAuthorEmails : limits.gitAuthorEmails ?? [];
   return [
     { name: "claude-code", dir: config.claudeDir, list: () => listClaudeFiles(config.claudeDir), parse: parseClaudeFile },
     { name: "codex", dir: config.codexDir, list: () => listCodexFiles(config.codexDir), parse: parseCodexFile },
-  ].filter((adapter) => existsSync(adapter.dir));
+    // Only the user's own commits are collected, so the Git source stays off until author emails are configured.
+    ...(authorEmails.length ? [{ name: "git", dir: config.gitDir, list: () => listGitRepos(config.gitDir), parse: gitAdapterParse(authorEmails, limits.windowDays) }] : []),
+  ].filter((adapter) => adapter.dir && existsSync(adapter.dir));
 }
 
 export function prepareTurns(turns, limits = DEFAULT_LIMITS, now = Date.now()) {
@@ -264,7 +336,7 @@ export async function scan(config, { limits = DEFAULT_LIMITS, send = null, state
   const cutoff = Date.now() - limits.windowDays * 86400000;
   const seen = new Set();
   const stats = [];
-  for (const adapter of adaptersFor(config)) {
+  for (const adapter of adaptersFor(config, limits)) {
     const stat = { agent: adapter.name, files: 0, changedFiles: 0, sessions: 0, turns: 0, chars: 0, unreadableLines: 0, sent: 0 };
     for (const filePath of adapter.list()) {
       let info;
@@ -345,7 +417,7 @@ async function main() {
   const log = (message) => console.log(`${new Date().toISOString()} ${message}`);
   if (args.has("--dry-run")) {
     const stats = await scan(config);
-    console.log(`Session directories: claude=${config.claudeDir} codex=${config.codexDir}`);
+    console.log(`Session directories: claude=${config.claudeDir} codex=${config.codexDir} git=${config.gitDir || "(not set)"}`);
     if (!stats.length) console.log("No supported session directory was found.");
     for (const stat of stats) {
       console.log(`${stat.agent}: ${stat.files} recent files, ${stat.sessions} sessions with human turns, ${stat.turns} turns, ${stat.chars} chars after trimming, ${stat.unreadableLines} unreadable lines`);
