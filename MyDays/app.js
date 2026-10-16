@@ -109,6 +109,18 @@ const elements = {
   exportButton: document.querySelector("#export-button"),
   importButton: document.querySelector("#import-button"),
   searchTrigger: document.querySelector("#search-trigger"),
+  achievementsOpen: document.querySelector("#achievements-open"),
+  achievementsDialog: document.querySelector("#achievements-dialog"),
+  achievementsClose: document.querySelector("#achievements-close"),
+  achievementsRanges: [...document.querySelectorAll("[data-range]")],
+  achievementsFrom: document.querySelector("#achievements-from"),
+  achievementsTo: document.querySelector("#achievements-to"),
+  achievementsScope: document.querySelector("#achievements-scope"),
+  achievementsOutput: document.querySelector("#achievements-output"),
+  achievementsState: document.querySelector("#achievements-state"),
+  achievementsCopy: document.querySelector("#achievements-copy"),
+  achievementsDownload: document.querySelector("#achievements-download"),
+  achievementsGenerate: document.querySelector("#achievements-generate"),
   searchShortcut: document.querySelector("#search-shortcut"),
   searchDialog: document.querySelector("#search-dialog"),
   searchInput: document.querySelector("#search-input"),
@@ -1764,7 +1776,7 @@ async function renderAgentTime(context) {
     return;
   }
   const key = `${context.startKey}:${context.endKey}`;
-  card.dataset.range = key;
+  card.dataset.timeRange = key;
   let cached = agentTimeCache.get(key);
   if (!cached || Date.now() - cached.at > AGENT_TIME_CACHE_MS) {
     try {
@@ -1775,7 +1787,7 @@ async function renderAgentTime(context) {
       return;
     }
   }
-  if (card.dataset.range !== key) return;
+  if (card.dataset.timeRange !== key) return;
   const { totalMinutes, byProject } = cached.data;
   card.hidden = !totalMinutes;
   if (!totalMinutes) return;
@@ -3072,6 +3084,72 @@ function openSearchResult(index) {
   navigateTo(target.route);
 }
 
+let achievementsLoading = false;
+
+function achievementRange(kind) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const todayKey = toDateKey(today);
+  const ranges = {
+    "first-half": [`${year}-01-01`, `${year}-06-30`],
+    "second-half": [`${year}-07-01`, `${year}-12-31`],
+    "year-to-date": [`${year}-01-01`, todayKey],
+    "last-year": [`${year - 1}-01-01`, `${year - 1}-12-31`],
+  };
+  const [from, to] = ranges[kind];
+  return [from, to > todayKey && kind !== "last-year" ? todayKey : to];
+}
+
+function selectAchievementRange(kind) {
+  const [from, to] = achievementRange(kind);
+  elements.achievementsFrom.value = from;
+  elements.achievementsTo.value = to;
+  elements.achievementsRanges.forEach((button) => button.classList.toggle("active", button.dataset.range === kind));
+}
+
+function updateAchievementActions() {
+  const hasText = Boolean(elements.achievementsOutput.value.trim());
+  elements.achievementsCopy.disabled = !hasText;
+  elements.achievementsDownload.disabled = !hasText;
+}
+
+function openAchievements() {
+  if (!elements.achievementsFrom.value) selectAchievementRange(new Date().getMonth() < 6 ? "first-half" : "second-half");
+  elements.achievementsScope.textContent = summaryProject ? `范围：项目「${summaryProject}」（与周期汇总的项目筛选一致）` : "范围：全部项目";
+  updateAchievementActions();
+  if (!elements.achievementsDialog.open) elements.achievementsDialog.showModal();
+}
+
+async function generateAchievements() {
+  if (achievementsLoading) return;
+  const from = elements.achievementsFrom.value;
+  const to = elements.achievementsTo.value;
+  if (!from || !to) {
+    elements.achievementsState.textContent = "请选择开始和结束日期";
+    return;
+  }
+  if (elements.achievementsOutput.value.trim() && !window.confirm("重新生成会覆盖当前的总结内容，是否继续？")) return;
+  achievementsLoading = true;
+  elements.achievementsGenerate.disabled = true;
+  elements.achievementsGenerate.textContent = "生成中…";
+  elements.achievementsState.textContent = "AI 正在整理这段时间的成果，可能需要一两分钟…";
+  try {
+    const result = await requestJson("/api/ai/achievements", {
+      method: "POST",
+      body: JSON.stringify({ from, to, ...(summaryProject ? { project: summaryProject } : {}) }),
+    });
+    elements.achievementsOutput.value = result.document;
+    elements.achievementsState.textContent = `由 ${result.provider} · ${result.model} 生成，可以直接编辑；结果不会自动保存。`;
+  } catch (error) {
+    elements.achievementsState.textContent = `生成失败：${error.message}`;
+  } finally {
+    achievementsLoading = false;
+    elements.achievementsGenerate.disabled = false;
+    elements.achievementsGenerate.textContent = "生成";
+    updateAchievementActions();
+  }
+}
+
 const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
 const STATE_MAP_KEYS = ["notes", "reviews", "periodReviews", "projectPeriodReviews", "periodReports", "projectPeriodReports"];
 
@@ -3407,6 +3485,26 @@ elements.menuImportButton.addEventListener("click", chooseBackupFile);
 elements.importFile.addEventListener("change", () => importBackupFile(elements.importFile.files[0]));
 if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) elements.searchShortcut.textContent = "Ctrl K";
 elements.searchTrigger.addEventListener("click", openSearch);
+elements.achievementsOpen.addEventListener("click", openAchievements);
+elements.achievementsClose.addEventListener("click", () => elements.achievementsDialog.close());
+elements.achievementsRanges.forEach((button) => button.addEventListener("click", () => selectAchievementRange(button.dataset.range)));
+[elements.achievementsFrom, elements.achievementsTo].forEach((input) => input.addEventListener("change", () => {
+  elements.achievementsRanges.forEach((button) => button.classList.remove("active"));
+}));
+elements.achievementsOutput.addEventListener("input", updateAchievementActions);
+elements.achievementsGenerate.addEventListener("click", generateAchievements);
+elements.achievementsCopy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(elements.achievementsOutput.value);
+    showToast("成就总结已复制");
+  } catch {
+    showToast("复制失败，请手动选择复制");
+  }
+});
+elements.achievementsDownload.addEventListener("click", () => {
+  const name = `mydays-achievements-${elements.achievementsFrom.value}-to-${elements.achievementsTo.value}.md`;
+  downloadBlob(new Blob([elements.achievementsOutput.value], { type: "text/markdown;charset=utf-8" }), name);
+});
 elements.searchInput.addEventListener("input", runSearch);
 elements.searchInput.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {

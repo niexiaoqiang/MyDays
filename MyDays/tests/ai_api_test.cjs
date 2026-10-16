@@ -34,9 +34,12 @@ const mock = createServer((request, response) => {
     response.setHeader("Content-Type", "application/json");
     if (request.url === "/openai/v1/chat/completions") {
       const isPolish = body?.messages?.some((message) => String(message.content).includes("原文："));
-      const isReport = !isPolish && body?.messages?.some((message) => String(message.content).includes("工作汇报"));
+      const isAchievements = body?.messages?.some((message) => String(message.content).includes("成就总结"));
+      const isReport = !isPolish && !isAchievements && body?.messages?.some((message) => String(message.content).includes("工作汇报"));
       const isSummary = !isReport && body?.messages?.some((message) => String(message.content).includes("周期数据："));
-      const content = isPolish
+      const content = isAchievements
+        ? "```markdown\n## 概述\n八月完成 2 项成果。\n\n## 主要成就\n- 完成登录体验优化\n```"
+        : isPolish
         ? mockPolishText(body)
         : isReport
         ? "## 本周工作汇报\n\n本周共完成 2 项待办，活跃 1 天。\n\n### 主要成果\n- 完成登录体验优化\n\n### 下一步\n- 完善 AI 汇报回归测试"
@@ -252,6 +255,26 @@ async function waitForApp() {
     let persistedState = await request("/api/state");
     assert.deepEqual(persistedState.body.data.periodReviews, {}, "AI 生成结果不得自动保存周期复盘");
     assert.deepEqual(persistedState.body.data.periodReports, {}, "AI 汇报生成结果不得自动保存到 SQLite");
+
+    result = await request("/api/ai/achievements", { method: "POST", body: JSON.stringify({ from: "2026-07-01", to: "2026-12-31" }) });
+    assert.equal(result.response.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.document, "## 概述\n八月完成 2 项成果。\n\n## 主要成就\n- 完成登录体验优化", "应去掉代码围栏");
+    assert.equal(result.body.provider, "Local OpenAI");
+    const achievementRequest = requests.find((entry) => entry.url === "/openai/v1/chat/completions"
+      && entry.body.messages.some((message) => String(message.content).includes("成就总结")));
+    const achievementPrompt = achievementRequest.body.messages[1].content;
+    assert.equal(achievementPrompt.includes("完成登录体验优化"), true, "成就总结必须基于该时间段的成果");
+    assert.equal(achievementPrompt.includes('"omittedAchievements":0'), true);
+    assert.equal(achievementPrompt.includes("突出项目价值与下周风险。"), true, "成就总结也应包含用户的总结偏好");
+    assert.equal(achievementRequest.body.max_tokens, 4096);
+    for (const body of [{ from: "2026-08-10", to: "2026-08-01" }, { from: "2025-01-01", to: "2026-06-30" }, { from: "bad", to: "2026-08-01" }, "nope"]) {
+      result = await request("/api/ai/achievements", { method: "POST", body: JSON.stringify(body) });
+      assert.equal(result.response.status, 400);
+      assert.equal(result.body.error.code, "AI_ACHIEVEMENTS_INVALID");
+    }
+    result = await request("/api/ai/achievements", { method: "POST", body: JSON.stringify({ from: "2025-01-01", to: "2025-06-30" }) });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error.code, "AI_ACHIEVEMENTS_EMPTY");
 
     result = await request("/api/ai/period-report", {
       method: "POST",

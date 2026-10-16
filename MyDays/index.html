@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=30" />
+    <link rel="stylesheet" href="/styles.css?v=31" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -75,6 +75,38 @@
           </button>
         </div>
         <input id="import-file" type="file" accept=".json,application/json" hidden />
+        <dialog class="achievements-dialog" id="achievements-dialog" aria-labelledby="achievements-title">
+          <div class="achievements-head">
+            <div>
+              <p class="section-kicker">ACHIEVEMENTS</p>
+              <h2 id="achievements-title">成就总结</h2>
+              <p>把一段时间的成果、周报和时间投入整理成按主题分组的总结，适合述职、绩效评估或简历素材。</p>
+            </div>
+            <button class="icon-button" id="achievements-close" type="button" aria-label="关闭">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+          <div class="achievements-range">
+            <div class="filter-tabs" role="group" aria-label="时间范围">
+              <button class="filter-tab active" type="button" data-range="first-half">上半年</button>
+              <button class="filter-tab" type="button" data-range="second-half">下半年</button>
+              <button class="filter-tab" type="button" data-range="year-to-date">今年至今</button>
+              <button class="filter-tab" type="button" data-range="last-year">去年</button>
+            </div>
+            <label class="ai-field"><span>开始</span><input id="achievements-from" type="date" required /></label>
+            <label class="ai-field"><span>结束</span><input id="achievements-to" type="date" required /></label>
+          </div>
+          <p class="achievements-scope" id="achievements-scope"></p>
+          <textarea id="achievements-output" maxlength="16000" placeholder="点击下方“生成”后，总结会出现在这里，可以直接编辑。" aria-label="成就总结内容"></textarea>
+          <div class="achievements-actions">
+            <span id="achievements-state" role="status" aria-live="polite">会把这段时间的工作记录发送给你配置的 AI 服务，结果不会自动保存。</span>
+            <div>
+              <button class="soft-button" id="achievements-copy" type="button" disabled>复制</button>
+              <button class="soft-button" id="achievements-download" type="button" disabled>下载 Markdown</button>
+              <button class="primary-button" id="achievements-generate" type="button">生成</button>
+            </div>
+          </div>
+        </dialog>
         <dialog class="search-dialog" id="search-dialog" aria-label="搜索记录">
           <div class="search-box">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
@@ -394,11 +426,17 @@
                 <h1 id="summary-title">回顾一段时间，看见持续的进展</h1>
                 <p>自动汇总工作数据，再写下属于自己的阶段复盘。</p>
               </div>
-              <div class="period-tabs" role="group" aria-label="汇总周期">
-                <button class="period-tab active" type="button" aria-pressed="true" data-period="week">每周</button>
-                <button class="period-tab" type="button" aria-pressed="false" data-period="month">每月</button>
-                <button class="period-tab" type="button" aria-pressed="false" data-period="quarter">每季度</button>
-                <button class="period-tab" type="button" aria-pressed="false" data-period="year">每年</button>
+              <div class="summary-hero-actions">
+                <div class="period-tabs" role="group" aria-label="汇总周期">
+                  <button class="period-tab active" type="button" aria-pressed="true" data-period="week">每周</button>
+                  <button class="period-tab" type="button" aria-pressed="false" data-period="month">每月</button>
+                  <button class="period-tab" type="button" aria-pressed="false" data-period="quarter">每季度</button>
+                  <button class="period-tab" type="button" aria-pressed="false" data-period="year">每年</button>
+                </div>
+                <button class="soft-button" id="achievements-open" type="button" aria-haspopup="dialog" aria-controls="achievements-dialog">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg>
+                  成就总结
+                </button>
               </div>
             </div>
 
@@ -690,6 +728,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=32"></script>
+    <script src="/app.js?v=33"></script>
   </body>
 </html>

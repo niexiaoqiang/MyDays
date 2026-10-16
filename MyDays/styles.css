@@ -6041,3 +6041,139 @@ p > .origin-chip:first-child {
   background: var(--surface);
   font-size: 13px;
 }
+
+/* Achievement summary */
+.summary-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.achievements-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  margin: auto;
+  padding: 22px 24px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-3);
+}
+
+.achievements-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.achievements-dialog::backdrop {
+  background: rgba(20, 21, 18, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.achievements-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.achievements-head h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.achievements-head p:not(.section-kicker) {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.achievements-range {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  align-items: end;
+  gap: 12px;
+}
+
+.achievements-range .ai-field input {
+  min-height: 36px;
+}
+
+.achievements-scope {
+  margin: 0;
+  color: var(--muted-light);
+  font-size: 12px;
+}
+
+.achievements-dialog textarea {
+  min-height: 320px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  outline: 0;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.achievements-dialog textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.achievements-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted-light);
+  font-size: 12px;
+}
+
+.achievements-actions > div {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .achievements-range {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .achievements-range .filter-tabs {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    justify-self: stretch;
+    width: 100%;
+    max-width: none;
+  }
+
+  .achievements-range .filter-tab {
+    padding: 0 4px;
+  }
+
+  .achievements-range .ai-field input {
+    width: 100%;
+    min-width: 0;
+    padding: 0 8px;
+  }
+
+  .achievements-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .achievements-actions > div {
+    justify-content: flex-end;
+  }
+}
