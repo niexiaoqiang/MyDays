@@ -143,6 +143,26 @@ const elements = {
   agentDigestMaxInput: document.querySelector("#agent-digest-max-input"),
   agentDigestExcluded: document.querySelector("#agent-digest-excluded"),
   agentDigestGitEmails: document.querySelector("#agent-digest-git-emails"),
+  agentDigestGitDirs: document.querySelector("#agent-digest-git-dirs"),
+  captureMoreButton: document.querySelector("#capture-more-button"),
+  captureMoreLabel: document.querySelector("#capture-more-label"),
+  captureExtra: document.querySelector("#capture-extra"),
+  captureDueDateField: document.querySelector("#capture-due-date-field"),
+  captureDueDate: document.querySelector("#capture-due-date"),
+  captureDueTime: document.querySelector("#capture-due-time"),
+  captureDueTimeLabel: document.querySelector("#capture-due-time-label"),
+  captureRemind: document.querySelector("#capture-remind"),
+  captureRepeat: document.querySelector("#capture-repeat"),
+  taskSettingsOpen: document.querySelector("#task-settings-open"),
+  taskSettingsDialog: document.querySelector("#task-settings-dialog"),
+  taskSettingsClose: document.querySelector("#task-settings-close"),
+  taskRollover: document.querySelector("#task-rollover"),
+  taskRolloverLabel: document.querySelector("#task-rollover-label"),
+  taskNotifyState: document.querySelector("#task-notify-state"),
+  taskNotifyEnable: document.querySelector("#task-notify-enable"),
+  recurrenceList: document.querySelector("#recurrence-list"),
+  recurrenceCount: document.querySelector("#recurrence-count"),
+  agentGitStatus: document.querySelector("#agent-git-status"),
   agentDigestInstructions: document.querySelector("#agent-digest-instructions"),
   agentDigestState: document.querySelector("#agent-digest-state"),
   agentDigestRefresh: document.querySelector("#agent-digest-refresh"),
@@ -240,6 +260,7 @@ const elements = {
 
 const defaultState = {
   tasks: [],
+  recurrences: [],
   logs: [],
   notes: {},
   reviews: {},
@@ -280,6 +301,8 @@ let projectOptions = [];
 let entryEdit = null;
 let agentDigest = null;
 let agentDigestRunningDate = null;
+let taskSettings = { taskRollover: true };
+let preparedTaskDate = null;
 
 function setAccountMenu(open, { restoreFocus = false } = {}) {
   if (open) closeSummaryExportMenu();
@@ -345,6 +368,7 @@ function renderAgentDigest({ fillForm = false } = {}) {
     elements.agentDigestMaxInput.value = settings.maxInputChars;
     elements.agentDigestExcluded.value = settings.excludedProjects.join("，");
     elements.agentDigestGitEmails.value = (settings.gitAuthorEmails ?? []).join("，");
+    elements.agentDigestGitDirs.value = (settings.gitRepoDirs ?? []).join("\n");
     elements.agentDigestInstructions.value = settings.instructions;
     elements.agentDigestState.textContent = agentDigest.providerReady
       ? "设置已载入"
@@ -373,6 +397,7 @@ function renderAgentDigest({ fillForm = false } = {}) {
         <span role="cell"><button class="text-button" type="button" data-digest-run="${escapeAttribute(day.date)}" ${!settings.enabled || !day.turnCount || agentDigestRunningDate ? "disabled" : ""}>${running ? "整理中…" : "重新整理"}</button></span>
       </div>`;
   }).join("");
+  renderAgentGitStatus();
   elements.agentDigestStored.textContent = `已暂存 ${agentDigest.storedTurns} 轮素材，保留 ${agentDigest.retentionDays} 天后自动清理`;
   elements.agentDigestClear.disabled = !agentDigest.storedTurns;
 
@@ -384,6 +409,28 @@ function renderAgentDigest({ fillForm = false } = {}) {
         <button class="text-button danger-text" type="button" data-token-revoke="${escapeAttribute(token.id)}" data-token-name="${escapeAttribute(token.name)}">吊销</button>
       </div>`).join("")
     : '<div class="summary-empty">还没有采集器令牌。开启功能后会自动创建本机采集器的令牌。</div>';
+}
+
+const GIT_DIR_STATES = {
+  ok: (entry) => `找到 ${entry.repos} 个仓库`,
+  missing: () => "采集器找不到这个目录",
+  "outside-mount": () => "不在采集器可见的范围内（Docker 只挂载主目录，可用 MYDAYS_GIT_ROOT 调整）",
+  "no-emails": (entry) => `找到 ${entry.repos} 个仓库，填写作者邮箱后开始采集`,
+};
+
+function renderAgentGitStatus() {
+  const configured = agentDigest.settings.gitRepoDirs ?? [];
+  const reported = agentDigest.collector;
+  const host = elements.agentGitStatus;
+  host.hidden = !configured.length;
+  if (!configured.length) return;
+  const byPath = new Map((reported?.gitDirs ?? []).map((entry) => [entry.path, entry]));
+  host.innerHTML = configured.map((dir) => {
+    const entry = byPath.get(dir);
+    const text = entry ? GIT_DIR_STATES[entry.state]?.(entry) ?? entry.state : "等待采集器下一轮检查";
+    const tone = !entry ? "pending" : entry.state === "ok" ? "ok" : "warn";
+    return `<div class="agent-git-dir ${tone}"><code>${escapeHtml(dir)}</code><span>${escapeHtml(text)}</span></div>`;
+  }).join("") + (reported?.reportedAt ? `<small>采集器上次报告：${escapeHtml(formatDateTime(reported.reportedAt))}</small>` : "");
 }
 
 function formatDateTime(timestamp) {
@@ -401,6 +448,7 @@ function readAgentDigestForm() {
     maxInputChars: Number(elements.agentDigestMaxInput.value),
     excludedProjects: elements.agentDigestExcluded.value.split(/[,，\n]/).map((name) => name.trim()).filter(Boolean),
     gitAuthorEmails: elements.agentDigestGitEmails.value.split(/[,，\s]+/).map((email) => email.trim()).filter(Boolean),
+    gitRepoDirs: elements.agentDigestGitDirs.value.split("\n").map((dir) => dir.trim()).filter(Boolean),
     instructions: elements.agentDigestInstructions.value,
   };
 }
@@ -574,6 +622,29 @@ function normalizeTask(task) {
     completed: Boolean(task.completed),
     createdAt: task.createdAt,
     completedAt: task.completedAt ?? null,
+    originDate: task.originDate ?? null,
+    dueDate: task.dueDate ?? null,
+    dueTime: task.dueTime ?? null,
+    remindMinutes: task.remindMinutes ?? null,
+    recurrenceId: task.recurrenceId ?? null,
+  };
+}
+
+function normalizeRecurrence(recurrence) {
+  return {
+    id: recurrence.id,
+    title: recurrence.title,
+    project: recurrence.project ?? "",
+    priority: recurrence.priority,
+    rule: recurrence.rule,
+    weekdays: recurrence.weekdays ?? 0,
+    monthDay: recurrence.monthDay ?? null,
+    dueTime: recurrence.dueTime ?? null,
+    remindMinutes: recurrence.remindMinutes ?? null,
+    startDate: recurrence.startDate,
+    paused: Boolean(recurrence.paused),
+    lastGeneratedDate: recurrence.lastGeneratedDate ?? null,
+    createdAt: recurrence.createdAt,
   };
 }
 
@@ -648,8 +719,11 @@ function diffProjectMap(base = {}, next = {}, normalize, kind, keyField, valueFi
 
 function diffState(base, next) {
   const tasks = diffEntries(base.tasks, next.tasks, normalizeTask, "task", "task");
+  const recurrences = diffEntries(base.recurrences ?? [], next.recurrences ?? [], normalizeRecurrence, "recurrence", "recurrence");
   const logs = diffEntries(base.logs, next.logs, normalizeLog, "log", "log");
   return [
+    ...recurrences.puts,
+    ...recurrences.deletes,
     ...tasks.puts,
     ...logs.puts,
     ...logs.deletes,
@@ -689,6 +763,8 @@ function applyOps(data, ops) {
     switch (op.op) {
       case "task.put": putEntry(data.tasks, op.task); break;
       case "task.delete": data.tasks = data.tasks.filter((task) => task.id !== op.id); break;
+      case "recurrence.put": putEntry(data.recurrences, op.recurrence); break;
+      case "recurrence.delete": data.recurrences = data.recurrences.filter((recurrence) => recurrence.id !== op.id); break;
       case "log.put": putEntry(data.logs, op.log); break;
       case "log.delete": data.logs = data.logs.filter((log) => log.id !== op.id); break;
       case "note.put": data.notes[op.date] = op.content; break;
@@ -712,9 +788,11 @@ function applyOps(data, ops) {
 }
 
 function adoptServerState(result) {
+  result.data.recurrences ??= [];
   state = result.data;
   syncedState = structuredClone(result.data);
   revision = result.revision;
+  if (result.taskSettings) taskSettings = result.taskSettings;
 }
 
 function persist({ defer = false, onSaved, onError } = {}) {
@@ -781,13 +859,15 @@ function queueSave({ onSaved, onError, keepalive = false } = {}) {
   });
 }
 
-async function mergeServerState() {
+async function mergeServerState({ message = "已同步其他页面的更新" } = {}) {
   let result;
   try {
     result = await requestJson("/api/state");
   } catch {
     return;
   }
+  result.data.recurrences ??= [];
+  if (result.taskSettings) taskSettings = result.taskSettings;
   const pending = diffState(syncedState, state);
   syncedState = structuredClone(result.data);
   state = applyOps(result.data, pending);
@@ -796,7 +876,7 @@ async function mergeServerState() {
     entryEdit = null;
   }
   renderPreservingFocus();
-  showToast("已同步其他页面的更新");
+  if (message) showToast(message);
   if (pending.length && !deferredSave) queueSave();
 }
 
@@ -822,6 +902,7 @@ async function bootstrap() {
     elements.accountMenuButton.hidden = false;
     elements.logoutButton.hidden = !auth.enabled;
     adoptServerState(await requestJson("/api/state"));
+    await prepareTasksForToday({ initial: true });
     try {
       await Promise.all([loadAiProviders(), loadAiSummarySettings(), loadProjectOptions()]);
       await loadAgentDigest().catch((digestError) => {
@@ -833,6 +914,7 @@ async function bootstrap() {
     }
     setSaveIndicator("已连接 SQLite");
     render();
+    checkTaskReminders();
   } catch (error) {
     setSaveIndicator("数据库连接失败", true);
     showToast(`加载失败：${error.message}`);
@@ -910,6 +992,7 @@ function showToast(message) {
 
 function render() {
   renderProjectChoices();
+  renderCaptureRepeatOptions();
   renderRoute();
   renderDate();
   renderTasks();
@@ -1138,7 +1221,7 @@ function focusCalendarDate(dateKey) {
 function tasksForDate(date = selectedDate) {
   return state.tasks
     .filter((task) => task.date === date)
-    .sort((a, b) => Number(a.completed) - Number(b.completed) || priorityWeight(b.priority) - priorityWeight(a.priority) || a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => Number(a.completed) - Number(b.completed) || dueRank(a) - dueRank(b) || priorityWeight(b.priority) - priorityWeight(a.priority) || a.createdAt.localeCompare(b.createdAt));
 }
 
 function logsForDate(date = selectedDate) {
@@ -1148,7 +1231,13 @@ function logsForDate(date = selectedDate) {
 }
 
 function renderOverview() {
-  const openTasks = tasksForDate().filter((task) => !task.completed);
+  const today = currentDateKey();
+  // On today's overview, open tasks planned for other days that are due soon are surfaced too.
+  const upcoming = selectedDate === today
+    ? state.tasks.filter((task) => !task.completed && task.date !== selectedDate && task.dueDate && daysBetweenKeys(today, task.dueDate) <= DUE_SOON_DAYS)
+    : [];
+  const openTasks = [...tasksForDate().filter((task) => !task.completed), ...upcoming]
+    .sort((a, b) => dueRank(a) - dueRank(b));
   const recentLogs = logsForDate();
   elements.overviewTaskCount.textContent = String(openTasks.length);
   elements.overviewLogCount.textContent = String(recentLogs.length);
@@ -1162,7 +1251,7 @@ function renderOverview() {
       const project = task.project ? `<span class="overview-chip project">${escapeHtml(task.project)}</span>` : "";
       return `<article class="overview-item">
         <span class="overview-item-marker task" aria-hidden="true"></span>
-        <div><strong title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</strong><p>${project}${priority}<time>${formatTime(task.createdAt)}</time></p></div>
+        <div><strong title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</strong><p>${renderTaskScheduleChips(task, "overview-chip")}${project}${priority}<time>${formatTime(task.createdAt)}</time></p></div>
       </article>`;
     }).join("");
   } else {
@@ -1283,12 +1372,24 @@ function renderEntryEditForm() {
         ${renderEntryEditSelect("project", "所属项目")}
         ${entryEdit.kind === "task" ? renderEntryEditSelect("priority", "优先级") : ""}
       </div>
+      ${entryEdit.kind === "task" ? renderEntryEditSchedule() : ""}
       ${sourceHint}
       <div class="entry-edit-actions">
         <button class="text-button cancel-entry-edit" type="button">取消</button>
         <button class="primary-button save-entry-edit" type="submit">保存修改</button>
       </div>
     </form>`;
+}
+
+function renderEntryEditSchedule() {
+  const { dueDate, dueTime, remindMinutes } = entryEdit.draft;
+  const remindOptions = [["", "不提醒"], ...Object.entries(REMIND_LABELS).map(([value, label]) => [value, label.replace("提醒", "") || label])];
+  return `
+    <div class="entry-edit-schedule">
+      <label class="capture-extra-field"><span>截止日期</span><input type="date" data-edit-field="dueDate" value="${escapeAttribute(dueDate)}" /></label>
+      <label class="capture-extra-field"><span>截止时间</span><input type="time" data-edit-field="dueTime" value="${escapeAttribute(dueTime)}" /></label>
+      <label class="capture-extra-field"><span>提醒</span><select data-edit-field="remindMinutes">${remindOptions.map(([value, label]) => `<option value="${value}"${value === remindMinutes ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
+    </div>`;
 }
 
 function sameEntryEditTarget(kind, id, host, hostId) {
@@ -1308,7 +1409,12 @@ function startEntryEdit(kind, id, host, hostId) {
   const original = {
     title: entry.title,
     project: entry.project ?? "",
-    ...(kind === "task" ? { priority: entry.priority ?? "normal" } : {}),
+    ...(kind === "task" ? {
+      priority: entry.priority ?? "normal",
+      dueDate: entry.dueDate ?? "",
+      dueTime: entry.dueTime ?? "",
+      remindMinutes: entry.remindMinutes === null || entry.remindMinutes === undefined ? "" : String(entry.remindMinutes),
+    } : {}),
   };
   entryEdit = {
     kind,
@@ -1447,11 +1553,21 @@ function saveEntryEdit() {
     render();
     return;
   }
+  if (entryEdit.kind === "task" && entryEdit.draft.remindMinutes !== "" && !entryEdit.draft.dueDate && !entryEdit.draft.dueTime) {
+    showToast("设置提醒前，先选择截止日期或时间");
+    return;
+  }
   const previousDraft = makeDailyReviewDraft(entry.date);
   entry.title = title;
   entry.project = entryEdit.draft.project;
   if (entryEdit.kind === "log") entry.source = "";
   if (entryEdit.kind === "task") {
+    const { dueTime, remindMinutes } = entryEdit.draft;
+    const dueDate = entryEdit.draft.dueDate || (dueTime ? entry.date : "");
+    entry.dueDate = dueDate || null;
+    entry.dueTime = dueTime || null;
+    entry.remindMinutes = remindMinutes === "" ? null : Number(remindMinutes);
+    if (entry.remindMinutes !== null) requestNotificationPermission();
     entry.priority = entryEdit.draft.priority;
     state.logs
       .filter((log) => log.sourceTaskId === entry.id)
@@ -1509,7 +1625,7 @@ function renderTasks() {
       </button>
       <div class="task-body">
         <p class="task-title" title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</p>
-        <div class="task-meta">${project}${priority}<span>${formatTime(task.createdAt)}</span></div>
+        <div class="task-meta">${renderTaskScheduleChips(task)}${project}${priority}<span>${formatTime(task.createdAt)}</span></div>
       </div>
       ${renderItemActions(task, "task")}`;
     fragment.append(item);
@@ -1519,6 +1635,303 @@ function renderTasks() {
 
 function priorityWeight(priority) {
   return priority === "high" ? 2 : priority === "normal" ? 1 : 0;
+}
+
+const WEEKDAY_NAMES = ["日", "一", "二", "三", "四", "五", "六"];
+const REMIND_LABELS = { 0: "准时提醒", 15: "提前 15 分钟提醒", 60: "提前 1 小时提醒", 1440: "提前 1 天提醒" };
+const DEFAULT_REMIND_CLOCK = "09:00";
+const REMINDER_STORAGE_KEY = "mydays.reminded";
+const REMINDER_GRACE_MS = 2 * 60 * 60 * 1000;
+const DUE_SOON_DAYS = 3;
+
+function currentDateKey() {
+  return toDateKey(new Date());
+}
+
+function daysBetweenKeys(from, to) {
+  return Math.round((fromDateKey(to) - fromDateKey(from)) / 86400000);
+}
+
+function shortDateLabel(key) {
+  const date = fromDateKey(key);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function recurrenceLabel(recurrence) {
+  if (recurrence.rule === "daily") return "每天";
+  if (recurrence.rule === "weekdays") return "工作日";
+  if (recurrence.rule === "monthly") return `每月 ${recurrence.monthDay} 日`;
+  const days = [1, 2, 3, 4, 5, 6, 0].filter((day) => recurrence.weekdays & (1 << day)).map((day) => WEEKDAY_NAMES[day]);
+  return `每周${days.join("、")}`;
+}
+
+// Mirrors recurrenceMatches in server.js, which is what actually generates the daily instances.
+function recurrenceMatchesDate(recurrence, dateKey) {
+  if (recurrence.paused || dateKey < recurrence.startDate) return false;
+  const date = fromDateKey(dateKey);
+  const weekday = date.getDay();
+  if (recurrence.rule === "daily") return true;
+  if (recurrence.rule === "weekdays") return weekday >= 1 && weekday <= 5;
+  if (recurrence.rule === "weekly") return Boolean(recurrence.weekdays & (1 << weekday));
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  return date.getDate() === Math.min(recurrence.monthDay, lastDay);
+}
+
+function dueInfo(task) {
+  if (!task.dueDate) return null;
+  const time = task.dueTime ? ` ${task.dueTime}` : "";
+  if (task.completed) return { tone: "", text: `截止 ${shortDateLabel(task.dueDate)}${time}` };
+  const days = daysBetweenKeys(currentDateKey(), task.dueDate);
+  if (days < 0) return { tone: "overdue", text: `逾期 ${-days} 天`, rank: 0 };
+  if (days === 0) {
+    const passed = task.dueTime && new Date(`${task.dueDate}T${task.dueTime}`) < new Date();
+    return passed
+      ? { tone: "overdue", text: `今天${time} 已截止`, rank: 0 }
+      : { tone: "today", text: `今天${time} 截止`, rank: 0 };
+  }
+  if (days === 1) return { tone: "soon", text: `明天${time} 截止`, rank: 1 };
+  if (days <= DUE_SOON_DAYS) return { tone: "soon", text: `还剩 ${days} 天`, rank: 1 };
+  return { tone: "", text: `${shortDateLabel(task.dueDate)}${time} 截止`, rank: 2 };
+}
+
+function dueRank(task) {
+  return task.completed ? 3 : dueInfo(task)?.rank ?? 2;
+}
+
+function renderTaskScheduleChips(task, chipClass = "schedule-chip") {
+  const chips = [];
+  const due = dueInfo(task);
+  if (due) {
+    const remind = task.remindMinutes !== null && task.remindMinutes !== undefined && !task.completed;
+    chips.push(`<span class="${chipClass} due ${due.tone}"${remind ? ` title="${escapeAttribute(REMIND_LABELS[task.remindMinutes] ?? "已设置提醒")}"` : ""}>${remind ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16ZM10 20a2 2 0 0 0 4 0"/></svg>' : ""}${escapeHtml(due.text)}</span>`);
+  }
+  if (task.originDate && task.originDate < task.date) {
+    chips.push(`<span class="${chipClass} rolled" title="最初计划于 ${escapeAttribute(task.originDate)}">顺延 ${daysBetweenKeys(task.originDate, task.date)} 天</span>`);
+  }
+  const recurrence = task.recurrenceId && state.recurrences.find((entry) => entry.id === task.recurrenceId);
+  if (recurrence) chips.push(`<span class="${chipClass} repeat">${escapeHtml(recurrenceLabel(recurrence))}</span>`);
+  return chips.join("");
+}
+
+async function prepareTasksForToday({ initial = false } = {}) {
+  const date = currentDateKey();
+  if (preparedTaskDate === date) return;
+  const previous = preparedTaskDate;
+  preparedTaskDate = date;
+  let result;
+  try {
+    if (!initial) await waitForPendingSaves();
+    result = await requestJson("/api/tasks/daily", { method: "POST", body: JSON.stringify({ date }) });
+  } catch {
+    preparedTaskDate = previous;
+    return;
+  }
+  // Keep "today" selected across midnight when the page stays open.
+  if (previous && selectedDate === previous) selectedDate = date;
+  const message = [
+    result.rolled ? `${result.rolled} 项未完成待办已顺延到今天` : "",
+    result.generated ? `已生成 ${result.generated} 项今天的重复待办` : "",
+  ].filter(Boolean).join("，");
+  if (!message) {
+    if (previous && selectedDate === date) render();
+    return;
+  }
+  if (initial) {
+    adoptServerState(result);
+    showToast(message);
+  } else {
+    await mergeServerState({ message });
+  }
+}
+
+function readRemindedKeys() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(REMINDER_STORAGE_KEY) ?? "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRemindedKeys(keys) {
+  try {
+    window.localStorage.setItem(REMINDER_STORAGE_KEY, JSON.stringify(keys.slice(-300)));
+  } catch {}
+}
+
+function taskReminderAt(task) {
+  if (task.completed || !task.dueDate || task.remindMinutes === null || task.remindMinutes === undefined) return null;
+  const due = new Date(`${task.dueDate}T${task.dueTime ?? DEFAULT_REMIND_CLOCK}`);
+  return Number.isNaN(due.getTime()) ? null : new Date(due.getTime() - task.remindMinutes * 60000);
+}
+
+function checkTaskReminders() {
+  const now = Date.now();
+  const reminded = readRemindedKeys();
+  const known = new Set(reminded);
+  const due = [];
+  for (const task of state.tasks) {
+    const at = taskReminderAt(task);
+    if (!at || at.getTime() > now || now - at.getTime() > REMINDER_GRACE_MS) continue;
+    const key = `${task.id}|${at.toISOString()}`;
+    if (known.has(key)) continue;
+    reminded.push(key);
+    due.push({ task, key });
+  }
+  if (!due.length) return;
+  writeRemindedKeys(reminded);
+  for (const { task, key } of due) {
+    const body = `${task.title}${dueInfo(task) ? ` · ${dueInfo(task).text}` : ""}`;
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        const notification = new Notification("MyDays 待办提醒", { body, tag: key });
+        notification.addEventListener("click", () => {
+          window.focus();
+          selectedDate = task.date;
+          navigateTo("/tasks");
+        });
+      } catch {}
+    }
+  }
+  showToast(due.length === 1 ? `提醒：${due[0].task.title}` : `有 ${due.length} 项待办到了提醒时间`);
+}
+
+function requestNotificationPermission() {
+  if (!("Notification" in window) || Notification.permission !== "default") return;
+  Notification.requestPermission().then(renderTaskSettings).catch(() => {});
+}
+
+function renderCaptureRepeatOptions() {
+  const date = fromDateKey(selectedDate);
+  const current = elements.captureRepeat.value;
+  elements.captureRepeat.replaceChildren(...[
+    ["", "不重复"],
+    ["daily", "每天"],
+    ["weekdays", "工作日（周一至周五）"],
+    ["weekly", `每周${WEEKDAY_NAMES[date.getDay()]}`],
+    ["monthly", `每月 ${date.getDate()} 日`],
+  ].map(([value, label]) => new Option(label, value)));
+  elements.captureRepeat.value = current;
+  syncCaptureExtra();
+}
+
+function setCaptureExtraOpen(open) {
+  elements.captureExtra.hidden = !open;
+  elements.captureMoreButton.setAttribute("aria-expanded", String(open));
+  elements.captureMoreButton.classList.toggle("active", open);
+}
+
+function syncCaptureExtra() {
+  const repeat = elements.captureRepeat.value;
+  elements.captureDueDateField.hidden = Boolean(repeat);
+  elements.captureDueTimeLabel.textContent = repeat ? "每次的时间" : "截止时间";
+  const parts = [];
+  if (repeat) parts.push(elements.captureRepeat.selectedOptions[0]?.textContent.replace(/（.*）/, "") ?? "");
+  else if (elements.captureDueDate.value) parts.push(`${shortDateLabel(elements.captureDueDate.value)} 截止`);
+  if (elements.captureDueTime.value) parts.push(elements.captureDueTime.value);
+  if (elements.captureRemind.value !== "") parts.push("提醒");
+  elements.captureMoreLabel.textContent = parts.length ? parts.join(" · ") : "截止 / 重复";
+  elements.captureMoreButton.classList.toggle("has-value", parts.length > 0);
+}
+
+function resetCaptureExtra() {
+  elements.captureDueDate.value = "";
+  elements.captureDueTime.value = "";
+  elements.captureRemind.value = "";
+  elements.captureRepeat.value = "";
+  setCaptureExtraOpen(false);
+  syncCaptureExtra();
+}
+
+// Returns the schedule fields for a new task, a recurrence when one was chosen, or an error message.
+function readCaptureSchedule() {
+  const dueTime = elements.captureDueTime.value || null;
+  const remindMinutes = elements.captureRemind.value === "" ? null : Number(elements.captureRemind.value);
+  const rule = elements.captureRepeat.value;
+  if (rule) {
+    if (remindMinutes !== null && !dueTime) return { error: "重复待办要提醒的话，请设置每次的时间" };
+    return { rule, dueTime, remindMinutes };
+  }
+  const dueDate = elements.captureDueDate.value || (dueTime ? selectedDate : null);
+  if (remindMinutes !== null && !dueDate) return { error: "设置提醒前，先选择截止日期或时间" };
+  return { dueDate, dueTime, remindMinutes };
+}
+
+function renderTaskSettings() {
+  elements.taskRollover.checked = taskSettings.taskRollover;
+  elements.taskRolloverLabel.textContent = taskSettings.taskRollover ? "已开启" : "已关闭";
+  const permission = "Notification" in window ? Notification.permission : "unsupported";
+  elements.taskNotifyEnable.hidden = permission !== "default";
+  elements.taskNotifyState.textContent = {
+    granted: "已允许。设置了提醒的待办到时会弹出系统通知；只在 MyDays 页面开着时提醒，放在后台标签页也可以。",
+    denied: "浏览器已禁止 MyDays 发送通知，可以在浏览器的网站设置里重新允许。在此之前，提醒只显示在页面内。",
+    default: "允许后，设置了提醒的待办到时会弹出系统通知；只在 MyDays 页面开着时提醒，放在后台标签页也可以。",
+    unsupported: "当前浏览器不支持系统通知，提醒只显示在页面内。",
+  }[permission];
+  const recurrences = state.recurrences ?? [];
+  elements.recurrenceCount.textContent = String(recurrences.length);
+  elements.recurrenceList.innerHTML = recurrences.length
+    ? recurrences.map((recurrence) => {
+      const meta = [
+        recurrenceLabel(recurrence),
+        recurrence.dueTime,
+        recurrence.project,
+        recurrence.remindMinutes !== null ? REMIND_LABELS[recurrence.remindMinutes] : "",
+        recurrence.paused ? "已暂停" : "",
+      ].filter(Boolean).join(" · ");
+      return `<div class="recurrence-row${recurrence.paused ? " paused" : ""}">
+        <div><strong>${escapeHtml(recurrence.title)}</strong><small>${escapeHtml(meta)}</small></div>
+        <div>
+          <button class="text-button" type="button" data-recurrence-toggle="${escapeAttribute(recurrence.id)}">${recurrence.paused ? "恢复" : "暂停"}</button>
+          <button class="text-button danger-text" type="button" data-recurrence-delete="${escapeAttribute(recurrence.id)}">删除</button>
+        </div>
+      </div>`;
+    }).join("")
+    : '<div class="summary-empty">还没有重复待办。添加待办时，在“截止 / 重复”里选择重复方式即可创建。</div>';
+}
+
+function openTaskSettings() {
+  renderTaskSettings();
+  elements.taskSettingsDialog.showModal();
+}
+
+async function setTaskRollover(enabled) {
+  try {
+    taskSettings = await requestJson("/api/tasks/settings", { method: "PUT", body: JSON.stringify({ taskRollover: enabled }) });
+    renderTaskSettings();
+    showToast(enabled ? "已开启自动顺延" : "已关闭自动顺延");
+    if (enabled) {
+      preparedTaskDate = null;
+      await prepareTasksForToday();
+    }
+  } catch (error) {
+    renderTaskSettings();
+    showToast(`保存失败：${error.message}`);
+  }
+}
+
+function toggleRecurrence(id) {
+  const recurrence = state.recurrences.find((entry) => entry.id === id);
+  if (!recurrence) return;
+  recurrence.paused = !recurrence.paused;
+  persist();
+  renderTaskSettings();
+  render();
+  showToast(recurrence.paused ? "已暂停，之后不再生成" : "已恢复");
+  if (!recurrence.paused) {
+    preparedTaskDate = null;
+    prepareTasksForToday();
+  }
+}
+
+function deleteRecurrence(id) {
+  const recurrence = state.recurrences.find((entry) => entry.id === id);
+  if (!recurrence || !window.confirm(`删除重复待办“${recurrence.title}”？之后不再生成，已经生成的待办会保留。`)) return;
+  state.recurrences = state.recurrences.filter((entry) => entry.id !== id);
+  persist();
+  renderTaskSettings();
+  render();
+  showToast("重复待办已删除");
 }
 
 function renderTimeline() {
@@ -2645,6 +3058,8 @@ function setCaptureType(type, { focus = true } = {}) {
     tab.setAttribute("aria-selected", String(active));
   });
   elements.priorityField.hidden = type !== "task";
+  elements.captureMoreButton.hidden = type !== "task";
+  if (type !== "task") setCaptureExtraOpen(false);
   elements.captureInput.placeholder = type === "task"
     ? "写下需要完成的事，按 Enter 保存…"
     : "记录刚刚完成的工作，按 Enter 保存…";
@@ -2817,16 +3232,51 @@ function addCapture(event) {
   const previousDraft = makeDailyReviewDraft(selectedDate);
   const now = new Date().toISOString();
   if (captureType === "task") {
-    state.tasks.push({
-      id: makeId(),
-      date: selectedDate,
-      title,
-      project,
-      priority: elements.prioritySelect.value,
-      completed: false,
-      createdAt: now,
-    });
-    showToast("待办已加入今天");
+    const schedule = readCaptureSchedule();
+    if (schedule.error) {
+      setCaptureExtraOpen(true);
+      showToast(schedule.error);
+      return;
+    }
+    const priority = elements.prioritySelect.value;
+    const task = { date: selectedDate, title, project, priority, completed: false, createdAt: now, completedAt: null, originDate: null };
+    if (schedule.rule) {
+      const date = fromDateKey(selectedDate);
+      const recurrence = {
+        id: makeId(),
+        title,
+        project,
+        priority,
+        rule: schedule.rule,
+        weekdays: schedule.rule === "weekly" ? 1 << date.getDay() : 0,
+        monthDay: schedule.rule === "monthly" ? date.getDate() : null,
+        dueTime: schedule.dueTime,
+        remindMinutes: schedule.remindMinutes,
+        startDate: selectedDate,
+        paused: false,
+        lastGeneratedDate: null,
+        createdAt: now,
+      };
+      // Today's instance is created right away; later ones are generated by the server on their day.
+      if (selectedDate <= currentDateKey() && recurrenceMatchesDate(recurrence, selectedDate)) {
+        recurrence.lastGeneratedDate = selectedDate;
+        state.tasks.push({
+          ...task,
+          id: `rec-${recurrence.id}-${selectedDate}`,
+          dueDate: schedule.dueTime ? selectedDate : null,
+          dueTime: schedule.dueTime,
+          remindMinutes: schedule.remindMinutes,
+          recurrenceId: recurrence.id,
+        });
+      }
+      state.recurrences.push(recurrence);
+      showToast(`已创建重复待办：${recurrenceLabel(recurrence)}`);
+    } else {
+      state.tasks.push({ ...task, id: makeId(), dueDate: schedule.dueDate, dueTime: schedule.dueTime, remindMinutes: schedule.remindMinutes, recurrenceId: null });
+      showToast("待办已加入今天");
+    }
+    if (schedule.remindMinutes !== null) requestNotificationPermission();
+    resetCaptureExtra();
   } else {
     state.logs.push({
       id: makeId(),
@@ -3166,7 +3616,7 @@ function parseBackup(text) {
   if (!data || typeof data !== "object" || !Array.isArray(data.tasks) || !Array.isArray(data.logs)) {
     throw new Error("文件不是 MyDays 导出的数据备份");
   }
-  const normalized = { tasks: data.tasks, logs: data.logs };
+  const normalized = { tasks: data.tasks, recurrences: Array.isArray(data.recurrences) ? data.recurrences : [], logs: data.logs };
   for (const key of STATE_MAP_KEYS) {
     normalized[key] = data[key] && typeof data[key] === "object" && !Array.isArray(data[key]) ? data[key] : {};
   }
@@ -3177,6 +3627,7 @@ function describeBackup(data) {
   const filled = (map) => Object.values(map).filter((value) => (typeof value === "string" ? value.trim() : value)).length;
   return [
     `${data.tasks.length} 条待办`,
+    ...(data.recurrences.length ? [`${data.recurrences.length} 个重复待办`] : []),
     `${data.logs.length} 条工作记录`,
     `${filled(data.notes)} 天笔记`,
     `${filled(data.reviews)} 天复盘`,
@@ -3383,6 +3834,7 @@ elements.taskList.addEventListener("submit", (event) => {
 });
 elements.taskList.addEventListener("input", (event) => {
   if (event.target.matches(".entry-edit-title")) updateEntryEditField("title", event.target.value);
+  if (event.target.dataset.editField) updateEntryEditField(event.target.dataset.editField, event.target.value);
 });
 elements.taskList.addEventListener("keydown", (event) => {
   if (handleEntryEditSelectKeydown(event)) event.stopPropagation();
@@ -3421,6 +3873,7 @@ elements.timelineList.addEventListener("submit", (event) => {
 });
 elements.timelineList.addEventListener("input", (event) => {
   if (event.target.matches(".entry-edit-title")) updateEntryEditField("title", event.target.value);
+  if (event.target.dataset.editField) updateEntryEditField(event.target.dataset.editField, event.target.value);
 });
 elements.timelineList.addEventListener("keydown", (event) => {
   if (handleEntryEditSelectKeydown(event)) event.stopPropagation();
@@ -3469,6 +3922,26 @@ elements.agentTokenList.addEventListener("click", (event) => {
 window.addEventListener("pagehide", flushDeferredSave);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushDeferredSave();
+  else tickTasks();
+});
+function tickTasks() {
+  prepareTasksForToday();
+  checkTaskReminders();
+}
+window.setInterval(tickTasks, 30000);
+elements.captureMoreButton.addEventListener("click", () => setCaptureExtraOpen(elements.captureExtra.hidden));
+[elements.captureDueDate, elements.captureDueTime, elements.captureRemind, elements.captureRepeat].forEach((input) => {
+  input.addEventListener("change", syncCaptureExtra);
+});
+elements.taskSettingsOpen.addEventListener("click", openTaskSettings);
+elements.taskSettingsClose.addEventListener("click", () => elements.taskSettingsDialog.close());
+elements.taskRollover.addEventListener("change", () => setTaskRollover(elements.taskRollover.checked));
+elements.taskNotifyEnable.addEventListener("click", requestNotificationPermission);
+elements.recurrenceList.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-recurrence-toggle]");
+  if (toggle) toggleRecurrence(toggle.dataset.recurrenceToggle);
+  const remove = event.target.closest("[data-recurrence-delete]");
+  if (remove) deleteRecurrence(remove.dataset.recurrenceDelete);
 });
 elements.exportButton.addEventListener("click", () => exportData());
 elements.menuExportButton.addEventListener("click", () => {

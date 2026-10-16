@@ -92,7 +92,7 @@ async function waitForServer() {
     assert.equal(body.data.periodReviews["year:2025-01-01"].wins, "升级前年度成果", "v2 周期复盘必须保留");
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "9");
+    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
     assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'period_reviews'").get().name, "period_reviews");
     assert.equal(migrated.prepare("SELECT COUNT(*) AS count FROM tasks WHERE id = 'v1-task'").get().count, 1);
     assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_providers'").get().name, "ai_providers");
@@ -206,7 +206,7 @@ async function waitForServer6() {
     assert.deepEqual(body.data.projectPeriodReports, {}, "升级后新项目汇报表应为空");
 
     const migrated6 = new DatabaseSync(databasePath6, { readOnly: true });
-    assert.equal(migrated6.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "9");
+    assert.equal(migrated6.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
     assert.equal(migrated6.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'period_reports'").get().name, "period_reports");
     assert.equal(migrated6.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_period_reports'").get().name, "project_period_reports");
     assert.equal(migrated6.prepare("SELECT COUNT(*) AS count FROM tasks WHERE id = 'v6-task'").get().count, 1);

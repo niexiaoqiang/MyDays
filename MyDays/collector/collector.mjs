@@ -24,6 +24,10 @@ export function readConfig(env = process.env) {
     claudeDir: env.CLAUDE_PROJECTS_DIR ?? path.join(home, ".claude", "projects"),
     codexDir: env.CODEX_SESSIONS_DIR ?? path.join(home, ".codex", "sessions"),
     gitDir: env.GIT_REPOS_DIR ?? "",
+    // In Docker, GIT_HOST_ROOT (a host folder) is mounted at GIT_MOUNT_DIR so directories chosen in MyDays can be found.
+    hostHome: env.HOST_HOME || home,
+    gitHostRoot: (env.GIT_HOST_ROOT ?? "").replace(/(.)\/+$/, "$1"),
+    gitMountDir: env.GIT_MOUNT_DIR ?? "",
     gitAuthorEmails: (env.GIT_AUTHOR_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean),
     stateDir: env.COLLECTOR_STATE_DIR ?? path.join(home, ".mydays", "collector"),
     intervalSeconds: Math.max(10, Number.parseInt(env.COLLECTOR_INTERVAL_SECONDS ?? "300", 10) || 300),
@@ -198,7 +202,23 @@ function listCodexFiles(dir, depth = 0) {
   return files;
 }
 
-const SKIPPED_DIRECTORIES = new Set(["node_modules", "vendor", "dist", "build", "target", ".venv", "venv"]);
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "vendor", "dist", "build", "target", ".venv", "venv", "Library"]);
+
+// Maps a directory configured in MyDays (as seen on the host) to a path this process can read.
+export function resolveGitDir(config, hostPath) {
+  const expanded = hostPath === "~" || hostPath.startsWith("~/") ? path.join(config.hostHome, hostPath.slice(1)) : hostPath;
+  if (!config.gitHostRoot || !config.gitMountDir) return { path: expanded, state: existsSync(expanded) ? "ok" : "missing" };
+  const relative = path.relative(config.gitHostRoot, expanded);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return { path: null, state: "outside-mount" };
+  const mapped = path.join(config.gitMountDir, relative);
+  return { path: mapped, state: existsSync(mapped) ? "ok" : "missing" };
+}
+
+export function gitDirectories(config, limits = DEFAULT_LIMITS) {
+  const configured = (limits.gitRepoDirs ?? []).map((hostPath) => ({ hostPath, ...resolveGitDir(config, hostPath) }));
+  if (config.gitDir) configured.push({ hostPath: config.gitDir, path: config.gitDir, state: existsSync(config.gitDir) ? "ok" : "missing" });
+  return configured;
+}
 
 // A repository is recognised by .git/logs/HEAD, whose modification time changes whenever HEAD moves (commit, checkout,
 // pull). Returning that file lets the generic scan skip repositories that have not changed since the last round.
@@ -274,11 +294,17 @@ function safeReaddir(dir) {
 
 export function adaptersFor(config, limits = DEFAULT_LIMITS) {
   const authorEmails = config.gitAuthorEmails.length ? config.gitAuthorEmails : limits.gitAuthorEmails ?? [];
+  const gitDirs = gitDirectories(config, limits).filter((dir) => dir.state === "ok").map((dir) => dir.path);
   return [
     { name: "claude-code", dir: config.claudeDir, list: () => listClaudeFiles(config.claudeDir), parse: parseClaudeFile },
     { name: "codex", dir: config.codexDir, list: () => listCodexFiles(config.codexDir), parse: parseCodexFile },
     // Only the user's own commits are collected, so the Git source stays off until author emails are configured.
-    ...(authorEmails.length ? [{ name: "git", dir: config.gitDir, list: () => listGitRepos(config.gitDir), parse: gitAdapterParse(authorEmails, limits.windowDays) }] : []),
+    ...(authorEmails.length && gitDirs.length ? [{
+      name: "git",
+      dir: gitDirs[0],
+      list: () => [...new Set(gitDirs.flatMap((dir) => listGitRepos(dir)))],
+      parse: gitAdapterParse(authorEmails, limits.windowDays),
+    }] : []),
   ].filter((adapter) => adapter.dir && existsSync(adapter.dir));
 }
 
@@ -400,6 +426,7 @@ export async function runOnce(config, log = console.log) {
       state,
       send: (turns) => requestJson(config, "/api/agent/turns", { method: "POST", body: JSON.stringify({ turns }) }),
     });
+    await reportStatus(config, limits).catch(() => {});
     const sent = stats.reduce((total, stat) => total + stat.sent, 0);
     if (sent) log(`sent ${sent} new or updated turns (${stats.map((stat) => `${stat.agent}: ${stat.sent}`).join(", ")})`);
     return "ok";
@@ -411,13 +438,37 @@ export async function runOnce(config, log = console.log) {
   }
 }
 
+export function collectorStatus(config, limits = DEFAULT_LIMITS) {
+  const hasEmails = Boolean(config.gitAuthorEmails.length || limits.gitAuthorEmails?.length);
+  return {
+    gitDirs: gitDirectories(config, limits).slice(0, 20).map((dir) => ({
+      path: dir.hostPath.slice(0, 300),
+      state: dir.state === "ok" && !hasEmails ? "no-emails" : dir.state,
+      repos: dir.state === "ok" ? listGitRepos(dir.path).length : 0,
+    })),
+  };
+}
+
+// Tells MyDays which configured Git directories this collector can see, so the settings page can explain problems.
+async function reportStatus(config, limits) {
+  const status = collectorStatus(config, limits);
+  const key = JSON.stringify(status);
+  if (key === lastReportedStatus && Date.now() - lastReportedAt < 3600000) return;
+  await requestJson(config, "/api/agent/collector-status", { method: "POST", body: key });
+  lastReportedStatus = key;
+  lastReportedAt = Date.now();
+}
+
+let lastReportedStatus = "";
+let lastReportedAt = 0;
+
 async function main() {
   const args = new Set(process.argv.slice(2));
   const config = readConfig();
   const log = (message) => console.log(`${new Date().toISOString()} ${message}`);
   if (args.has("--dry-run")) {
     const stats = await scan(config);
-    console.log(`Session directories: claude=${config.claudeDir} codex=${config.codexDir} git=${config.gitDir || "(not set)"}`);
+    console.log(`Session directories: claude=${config.claudeDir} codex=${config.codexDir} git=${gitDirectories(config).map((dir) => dir.path ?? dir.hostPath).join(",") || "(not set)"}`);
     if (!stats.length) console.log("No supported session directory was found.");
     for (const stat of stats) {
       console.log(`${stat.agent}: ${stat.files} recent files, ${stat.sessions} sessions with human turns, ${stat.turns} turns, ${stat.chars} chars after trimming, ${stat.unreadableLines} unreadable lines`);

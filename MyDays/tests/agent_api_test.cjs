@@ -138,7 +138,7 @@ async function digestLogs(date) {
     result = await agent(token, "/api/agent/unknown");
     assert.equal(result.response.status, 404);
 
-    for (const body of [{ summaryTime: "25:00" }, { timezone: "Mars/Olympus" }, { dayStartHour: 13 }, { maxInputChars: 10 }, { providerId: "missing" }, { excludedProjects: [""] }, { gitAuthorEmails: ["not-an-email"] }, { gitAuthorEmails: Array.from({ length: 11 }, (_, index) => `a${index}@b.c`) }]) {
+    for (const body of [{ summaryTime: "25:00" }, { timezone: "Mars/Olympus" }, { dayStartHour: 13 }, { maxInputChars: 10 }, { providerId: "missing" }, { excludedProjects: [""] }, { gitAuthorEmails: ["not-an-email"] }, { gitAuthorEmails: Array.from({ length: 11 }, (_, index) => `a${index}@b.c`) }, { gitRepoDirs: ["relative/path"] }, { gitRepoDirs: ["/a\nb"] }, { gitRepoDirs: Array.from({ length: 11 }, (_, index) => `/r${index}`) }, { gitRepoDirs: "/repos" }]) {
       result = await request("/api/agent-digest/settings", { method: "PUT", body: JSON.stringify(body) });
       assert.equal(result.response.status, 400, JSON.stringify(body));
       assert.equal(result.body.error.code, "AGENT_DIGEST_SETTINGS_INVALID");
@@ -159,6 +159,20 @@ async function digestLogs(date) {
     result = await agent(builtinToken, "/api/agent/config");
     assert.equal(result.body.enabled, true, "本机采集器令牌必须可用");
     assert.deepEqual(result.body.gitAuthorEmails, ["me@example.com"], "采集器需要拿到 Git 作者邮箱");
+    result = await request("/api/agent-digest/settings", { method: "PUT", body: JSON.stringify({ gitRepoDirs: [" ~/code/ ", "~/code", "/Users/me/work", "~"] }) });
+    assert.equal(result.response.status, 200);
+    assert.deepEqual(result.body.gitRepoDirs, ["~/code", "/Users/me/work", "~"], "目录去空格、去掉末尾斜杠并去重");
+    result = await agent(builtinToken, "/api/agent/config");
+    assert.deepEqual(result.body.gitRepoDirs, ["~/code", "/Users/me/work", "~"], "采集器需要拿到 Git 仓库目录");
+    result = await agent(builtinToken, "/api/agent/collector-status", { method: "POST", body: JSON.stringify({ gitDirs: [{ path: "~/code", state: "ok", repos: 3 }, { path: "/Users/me/work", state: "outside-mount", repos: 0 }] }) });
+    assert.equal(result.response.status, 200);
+    for (const body of [{}, { gitDirs: [{ path: "~/code", state: "weird" }] }, { gitDirs: [{ path: 1, state: "ok" }] }]) {
+      result = await agent(builtinToken, "/api/agent/collector-status", { method: "POST", body: JSON.stringify(body) });
+      assert.equal(result.response.status, 400, JSON.stringify(body));
+    }
+    result = await request("/api/agent-digest/status");
+    assert.deepEqual(result.body.collector.gitDirs, [{ path: "~/code", state: "ok", repos: 3 }, { path: "/Users/me/work", state: "outside-mount", repos: 0 }]);
+    assert.ok(result.body.collector.reportedAt);
 
     const today = dateKey(0);
     const yesterday = dateKey(1);

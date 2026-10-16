@@ -484,12 +484,57 @@ try {
   throw error;
 }
 
+database.exec("BEGIN IMMEDIATE");
+try {
+  if (!database.prepare("PRAGMA table_info(agent_digest_settings)").all().some((column) => column.name === "git_repo_dirs_json")) {
+    database.exec("ALTER TABLE agent_digest_settings ADD COLUMN git_repo_dirs_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_recurrences (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
+      priority TEXT NOT NULL CHECK (priority IN ('low', 'normal', 'high')),
+      rule TEXT NOT NULL CHECK (rule IN ('daily', 'weekdays', 'weekly', 'monthly')),
+      weekdays INTEGER NOT NULL DEFAULT 0 CHECK (weekdays BETWEEN 0 AND 127),
+      month_day INTEGER CHECK (month_day BETWEEN 1 AND 31),
+      due_time TEXT,
+      remind_minutes INTEGER CHECK (remind_minutes >= 0),
+      start_date TEXT NOT NULL,
+      paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+      last_generated_date TEXT,
+      created_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  const taskColumns = new Set(database.prepare("PRAGMA table_info(tasks)").all().map((column) => column.name));
+  for (const [name, definition] of [
+    ["origin_date", "TEXT"],
+    ["due_date", "TEXT"],
+    ["due_time", "TEXT"],
+    ["remind_minutes", "INTEGER CHECK (remind_minutes >= 0)"],
+    // Not a foreign key: instances keep pointing at a deleted rule so missed ones never start rolling over.
+    ["recurrence_id", "TEXT"],
+  ]) {
+    if (!taskColumns.has(name)) database.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
+  }
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_recurrence_date ON tasks(recurrence_id, work_date) WHERE recurrence_id IS NOT NULL;
+    INSERT OR IGNORE INTO metadata(key, value) VALUES ('task_rollover', '1');
+    UPDATE metadata SET value = '10' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 10;
+  `);
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
 const statements = {
   getRevision: database.prepare("SELECT value FROM metadata WHERE key = 'revision'"),
   setRevision: database.prepare("UPDATE metadata SET value = ? WHERE key = 'revision'"),
   countData: database.prepare(`
     SELECT
       (SELECT COUNT(*) FROM tasks) +
+      (SELECT COUNT(*) FROM task_recurrences) +
       (SELECT COUNT(*) FROM logs) +
       (SELECT COUNT(*) FROM notes) +
       (SELECT COUNT(*) FROM reviews) +
@@ -499,8 +544,40 @@ const statements = {
       (SELECT COUNT(*) FROM project_period_reports) AS count
   `),
   readTasks: database.prepare(`
-    SELECT id, work_date, title, project, priority, completed, created_at, completed_at
+    SELECT id, work_date, title, project, priority, completed, created_at, completed_at,
+      origin_date, due_date, due_time, remind_minutes, recurrence_id
     FROM tasks ORDER BY created_at ASC
+  `),
+  readRecurrences: database.prepare(`
+    SELECT id, title, project, priority, rule, weekdays, month_day, due_time, remind_minutes, start_date, paused,
+      last_generated_date, created_at
+    FROM task_recurrences ORDER BY created_at ASC
+  `),
+  recurrenceExists: database.prepare("SELECT 1 AS found FROM task_recurrences WHERE id = ?"),
+  upsertRecurrence: database.prepare(`
+    INSERT INTO task_recurrences(id, title, project, priority, rule, weekdays, month_day, due_time, remind_minutes,
+      start_date, paused, last_generated_date, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET title = excluded.title, project = excluded.project, priority = excluded.priority,
+      rule = excluded.rule, weekdays = excluded.weekdays, month_day = excluded.month_day, due_time = excluded.due_time,
+      remind_minutes = excluded.remind_minutes, start_date = excluded.start_date, paused = excluded.paused,
+      last_generated_date = nullif(max(coalesce(task_recurrences.last_generated_date, ''), coalesce(excluded.last_generated_date, '')), ''),
+      created_at = excluded.created_at
+  `),
+  deleteRecurrence: database.prepare("DELETE FROM task_recurrences WHERE id = ?"),
+  markRecurrenceGenerated: database.prepare("UPDATE task_recurrences SET last_generated_date = ? WHERE id = ?"),
+  insertRecurrenceTask: database.prepare(`
+    INSERT OR IGNORE INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at,
+      origin_date, due_date, due_time, remind_minutes, recurrence_id)
+    VALUES (?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?, ?, ?)
+  `),
+  rollOverTasks: database.prepare(`
+    UPDATE tasks SET origin_date = coalesce(origin_date, work_date), work_date = ?
+    WHERE completed = 0 AND work_date < ? AND recurrence_id IS NULL
+  `),
+  readMetadata: database.prepare("SELECT value FROM metadata WHERE key = ?"),
+  writeMetadata: database.prepare(`
+    INSERT INTO metadata(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `),
   readLogs: database.prepare(`
     SELECT id, work_date, title, project, source_task_id, source, created_at
@@ -520,8 +597,9 @@ const statements = {
     FROM project_period_reviews ORDER BY period_start ASC, period_type ASC, project ASC
   `),
   insertTask: database.prepare(`
-    INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at,
+      origin_date, due_date, due_time, remind_minutes, recurrence_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   insertLog: database.prepare(`
     INSERT INTO logs(id, work_date, title, project, source_task_id, created_at, source)
@@ -563,11 +641,14 @@ const statements = {
   `),
   taskExists: database.prepare("SELECT 1 AS found FROM tasks WHERE id = ?"),
   upsertTask: database.prepare(`
-    INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at,
+      origin_date, due_date, due_time, remind_minutes, recurrence_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date, title = excluded.title,
       project = excluded.project, priority = excluded.priority, completed = excluded.completed,
-      created_at = excluded.created_at, completed_at = excluded.completed_at
+      created_at = excluded.created_at, completed_at = excluded.completed_at, origin_date = excluded.origin_date,
+      due_date = excluded.due_date, due_time = excluded.due_time, remind_minutes = excluded.remind_minutes,
+      recurrence_id = excluded.recurrence_id
   `),
   deleteTask: database.prepare("DELETE FROM tasks WHERE id = ?"),
   upsertLog: database.prepare(`
@@ -1763,6 +1844,27 @@ function readState() {
     completed: Boolean(row.completed),
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    originDate: row.origin_date,
+    dueDate: row.due_date,
+    dueTime: row.due_time,
+    remindMinutes: row.remind_minutes,
+    recurrenceId: row.recurrence_id,
+  }));
+
+  const recurrences = statements.readRecurrences.all().map((row) => ({
+    id: row.id,
+    title: row.title,
+    project: row.project,
+    priority: row.priority,
+    rule: row.rule,
+    weekdays: row.weekdays,
+    monthDay: row.month_day,
+    dueTime: row.due_time,
+    remindMinutes: row.remind_minutes,
+    startDate: row.start_date,
+    paused: Boolean(row.paused),
+    lastGeneratedDate: row.last_generated_date,
+    createdAt: row.created_at,
   }));
 
   const logs = statements.readLogs.all().map((row) => ({
@@ -1820,12 +1922,15 @@ function readState() {
     (row) => `${row.period_type}:${row.period_start}`,
   );
 
-  return { tasks, logs, notes, reviews, periodReviews, projectPeriodReviews, periodReports, projectPeriodReports };
+  return {
+    tasks, recurrences, logs, notes, reviews, periodReviews, projectPeriodReviews, periodReports, projectPeriodReports,
+  };
 }
 
 function stateResponse() {
   return {
     data: readState(),
+    taskSettings: { taskRollover: statements.readMetadata.get("task_rollover")?.value !== "0" },
     revision: getRevision(),
     empty: !hasDatabaseData(),
   };
@@ -1924,7 +2029,142 @@ function validateTaskValue(task, field) {
     completed: task.completed,
     createdAt: requireTimestamp(task.createdAt, `${field}.createdAt`),
     completedAt: requireTimestamp(task.completedAt, `${field}.completedAt`, { nullable: true }),
+    originDate: task.originDate == null ? null : requireDate(task.originDate, `${field}.originDate`),
+    dueDate: task.dueDate == null ? null : requireDate(task.dueDate, `${field}.dueDate`),
+    dueTime: requireClockTime(task.dueTime, `${field}.dueTime`),
+    remindMinutes: requireRemindMinutes(task.remindMinutes, `${field}.remindMinutes`),
+    recurrenceId: requireString(task.recurrenceId ?? null, `${field}.recurrenceId`, 128, { nullable: true }),
   };
+}
+
+const RECURRENCE_RULES = ["daily", "weekdays", "weekly", "monthly"];
+const MAX_REMIND_MINUTES = 7 * 24 * 60;
+
+function requireClockTime(value, field) {
+  if (value == null) return null;
+  if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw new HttpError(400, "INVALID_STATE", `${field} 必须是 HH:MM`);
+  }
+  return value;
+}
+
+function requireRemindMinutes(value, field) {
+  if (value == null) return null;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_REMIND_MINUTES) {
+    throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  }
+  return value;
+}
+
+function validateRecurrenceValue(recurrence, field) {
+  if (!isPlainObject(recurrence)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  if (!["low", "normal", "high"].includes(recurrence.priority)) {
+    throw new HttpError(400, "INVALID_STATE", `${field}.priority 无效`);
+  }
+  if (!RECURRENCE_RULES.includes(recurrence.rule)) throw new HttpError(400, "INVALID_STATE", `${field}.rule 无效`);
+  const weekdays = recurrence.weekdays ?? 0;
+  if (!Number.isInteger(weekdays) || weekdays < 0 || weekdays > 127 || (recurrence.rule === "weekly" && weekdays === 0)) {
+    throw new HttpError(400, "INVALID_STATE", `${field}.weekdays 无效`);
+  }
+  const monthDay = recurrence.monthDay ?? null;
+  if (recurrence.rule === "monthly" ? !Number.isInteger(monthDay) || monthDay < 1 || monthDay > 31 : monthDay !== null) {
+    throw new HttpError(400, "INVALID_STATE", `${field}.monthDay 无效`);
+  }
+  if (typeof (recurrence.paused ?? false) !== "boolean") throw new HttpError(400, "INVALID_STATE", `${field}.paused 必须是布尔值`);
+  return {
+    id: requireString(recurrence.id, `${field}.id`, 128),
+    title: requireString(recurrence.title, `${field}.title`, 120),
+    project: requireString(recurrence.project ?? "", `${field}.project`, 80, { allowEmpty: true }),
+    priority: recurrence.priority,
+    rule: recurrence.rule,
+    weekdays: recurrence.rule === "weekly" ? weekdays : 0,
+    monthDay,
+    dueTime: requireClockTime(recurrence.dueTime, `${field}.dueTime`),
+    remindMinutes: requireRemindMinutes(recurrence.remindMinutes, `${field}.remindMinutes`),
+    startDate: requireDate(recurrence.startDate, `${field}.startDate`),
+    paused: recurrence.paused ?? false,
+    lastGeneratedDate: recurrence.lastGeneratedDate == null ? null : requireDate(recurrence.lastGeneratedDate, `${field}.lastGeneratedDate`),
+    createdAt: requireTimestamp(recurrence.createdAt, `${field}.createdAt`),
+  };
+}
+
+function taskRowParams(task) {
+  return [
+    task.id, task.date, task.title, task.project, task.priority, task.completed ? 1 : 0, task.createdAt, task.completedAt,
+    task.originDate, task.dueDate, task.dueTime, task.remindMinutes, task.recurrenceId,
+  ];
+}
+
+function recurrenceRowParams(recurrence) {
+  return [
+    recurrence.id, recurrence.title, recurrence.project, recurrence.priority, recurrence.rule, recurrence.weekdays,
+    recurrence.monthDay, recurrence.dueTime, recurrence.remindMinutes, recurrence.startDate, recurrence.paused ? 1 : 0,
+    recurrence.lastGeneratedDate, recurrence.createdAt,
+  ];
+}
+
+function recurrenceMatches(recurrence, dateKey) {
+  if (recurrence.paused || dateKey < recurrence.startDate) return false;
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  const weekday = date.getUTCDay();
+  switch (recurrence.rule) {
+    case "daily": return true;
+    case "weekdays": return weekday >= 1 && weekday <= 5;
+    case "weekly": return Boolean(recurrence.weekdays & (1 << weekday));
+    case "monthly": {
+      // A rule for the 31st falls on the last day of shorter months.
+      const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+      return date.getUTCDate() === Math.min(recurrence.monthDay, lastDay);
+    }
+    default: return false;
+  }
+}
+
+// Brings the task list up to date for the client's "today": open one-off tasks from earlier days move to today, and
+// each recurring rule produces at most one task per day. Both run in one transaction so concurrent tabs or devices
+// cannot duplicate work; a rule's last_generated_date also keeps a deleted instance from coming back.
+function prepareTasksForDay(input) {
+  if (!isPlainObject(input)) throw new HttpError(400, "INVALID_TASK_DAY", "请求内容必须是对象");
+  const date = (() => {
+    try {
+      return requireDate(input.date, "date");
+    } catch {
+      throw new HttpError(400, "INVALID_TASK_DAY", "date 必须是 YYYY-MM-DD");
+    }
+  })();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    let rolled = 0;
+    let generated = 0;
+    if (statements.readMetadata.get("task_rollover")?.value !== "0") {
+      rolled = Number(statements.rollOverTasks.run(date, date).changes);
+    }
+    const now = new Date().toISOString();
+    for (const row of statements.readRecurrences.all()) {
+      const recurrence = { rule: row.rule, weekdays: row.weekdays, monthDay: row.month_day, startDate: row.start_date, paused: Boolean(row.paused) };
+      if ((row.last_generated_date ?? "") >= date || !recurrenceMatches(recurrence, date)) continue;
+      generated += Number(statements.insertRecurrenceTask.run(
+        `rec-${row.id}-${date}`, date, row.title, row.project, row.priority, now,
+        row.due_time ? date : null, row.due_time, row.remind_minutes, row.id,
+      ).changes);
+      statements.markRecurrenceGenerated.run(date, row.id);
+    }
+    const changed = rolled + generated > 0;
+    if (changed) statements.setRevision.run(String(getRevision() + 1));
+    database.exec("COMMIT");
+    return { rolled, generated, ...(changed ? stateResponse() : { revision: getRevision() }) };
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function saveTaskSettings(input) {
+  if (!isPlainObject(input) || typeof input.taskRollover !== "boolean") {
+    throw new HttpError(400, "INVALID_TASK_SETTINGS", "taskRollover 必须是布尔值");
+  }
+  statements.writeMetadata.run("task_rollover", input.taskRollover ? "1" : "0");
+  return { taskRollover: input.taskRollover };
 }
 
 function validateLogSource(value, field) {
@@ -2005,6 +2245,21 @@ function validateState(input, {
     return validated;
   });
 
+  const recurrenceIds = new Set();
+  const recurrences = requireArray(input.recurrences ?? [], "recurrences", 500).map((recurrence, index) => {
+    const validated = validateRecurrenceValue(recurrence, `recurrences[${index}]`);
+    if (recurrenceIds.has(validated.id)) throw new HttpError(400, "INVALID_STATE", `重复待办 ID 重复：${validated.id}`);
+    recurrenceIds.add(validated.id);
+    return validated;
+  });
+  const recurrenceDays = new Set();
+  for (const task of tasks) {
+    if (!task.recurrenceId) continue;
+    const key = `${task.recurrenceId}:${task.date}`;
+    if (recurrenceDays.has(key)) throw new HttpError(400, "INVALID_STATE", `重复待办同一天有多条：${task.title}`);
+    recurrenceDays.add(key);
+  }
+
   const logIds = new Set();
   const logs = requireArray(input.logs, "logs", 20000).map((log, index) => {
     const validated = validateLogValue(log, `logs[${index}]`);
@@ -2071,6 +2326,7 @@ function validateState(input, {
 
   return {
     tasks,
+    recurrences,
     logs,
     notes,
     reviews,
@@ -2090,6 +2346,7 @@ function replaceState(nextState, expectedRevision) {
     database.exec(`
       DELETE FROM logs;
       DELETE FROM tasks;
+      DELETE FROM task_recurrences;
       DELETE FROM notes;
       DELETE FROM reviews;
       DELETE FROM period_reviews;
@@ -2098,18 +2355,8 @@ function replaceState(nextState, expectedRevision) {
       DELETE FROM project_period_reports;
     `);
 
-    for (const task of nextState.tasks) {
-      statements.insertTask.run(
-        task.id,
-        task.date,
-        task.title,
-        task.project,
-        task.priority,
-        task.completed ? 1 : 0,
-        task.createdAt,
-        task.completedAt,
-      );
-    }
+    for (const recurrence of nextState.recurrences) statements.upsertRecurrence.run(...recurrenceRowParams(recurrence));
+    for (const task of nextState.tasks) statements.insertTask.run(...taskRowParams(task));
     for (const log of nextState.logs) {
       statements.insertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt, log.source);
     }
@@ -2184,9 +2431,15 @@ const reviewParams = (review, now) => [review.wins, review.blockers, review.next
 const PATCH_OPS = {
   "task.put": {
     parse: (op, field) => ({ task: validateTaskValue(op.task, `${field}.task`) }),
-    run: ({ task }) => statements.upsertTask.run(
-      task.id, task.date, task.title, task.project, task.priority, task.completed ? 1 : 0, task.createdAt, task.completedAt,
-    ),
+    run: ({ task }) => statements.upsertTask.run(...taskRowParams(task)),
+  },
+  "recurrence.put": {
+    parse: (op, field) => ({ recurrence: validateRecurrenceValue(op.recurrence, `${field}.recurrence`) }),
+    run: ({ recurrence }) => statements.upsertRecurrence.run(...recurrenceRowParams(recurrence)),
+  },
+  "recurrence.delete": {
+    parse: (op, field) => ({ id: requireString(op.id, `${field}.id`, 128) }),
+    run: ({ id }) => statements.deleteRecurrence.run(id),
   },
   "task.delete": {
     parse: (op, field) => ({ id: requireString(op.id, `${field}.id`, 128) }),
@@ -2316,6 +2569,9 @@ function applyPatch({ baseRevision, ops }) {
     return { revision: nextRevision, stale: baseRevision !== currentRevision };
   } catch (error) {
     if (database.isTransaction) database.exec("ROLLBACK");
+    if (String(error.message).includes("UNIQUE constraint failed: tasks.recurrence_id")) {
+      throw new HttpError(400, "INVALID_STATE", "同一个重复待办在一天里只能有一条");
+    }
     throw error;
   }
 }
@@ -2351,19 +2607,20 @@ const agentStatements = {
   deleteTurnsBefore: database.prepare("DELETE FROM agent_turns WHERE started_at < ?"),
   readSettings: database.prepare(`
     SELECT enabled, summary_time, day_start_hour, timezone, provider_id, max_input_chars,
-      instructions, excluded_projects_json, git_author_emails_json, updated_at
+      instructions, excluded_projects_json, git_author_emails_json, git_repo_dirs_json, updated_at
     FROM agent_digest_settings WHERE singleton_id = 1
   `),
   saveSettings: database.prepare(`
     INSERT INTO agent_digest_settings(
       singleton_id, enabled, summary_time, day_start_hour, timezone, provider_id, max_input_chars,
-      instructions, excluded_projects_json, git_author_emails_json, updated_at
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      instructions, excluded_projects_json, git_author_emails_json, git_repo_dirs_json, updated_at
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(singleton_id) DO UPDATE SET enabled = excluded.enabled, summary_time = excluded.summary_time,
       day_start_hour = excluded.day_start_hour, timezone = excluded.timezone, provider_id = excluded.provider_id,
       max_input_chars = excluded.max_input_chars, instructions = excluded.instructions,
       excluded_projects_json = excluded.excluded_projects_json,
-      git_author_emails_json = excluded.git_author_emails_json, updated_at = excluded.updated_at
+      git_author_emails_json = excluded.git_author_emails_json, git_repo_dirs_json = excluded.git_repo_dirs_json,
+      updated_at = excluded.updated_at
   `),
   readRuns: database.prepare(`
     SELECT work_date, status, finalized, turn_count, input_chars, item_count, attempts, error_code,
@@ -2446,6 +2703,7 @@ function readAgentDigestSettings() {
     instructions: row?.instructions ?? "",
     excludedProjects: JSON.parse(row?.excluded_projects_json ?? "[]"),
     gitAuthorEmails: JSON.parse(row?.git_author_emails_json ?? "[]"),
+    gitRepoDirs: JSON.parse(row?.git_repo_dirs_json ?? "[]"),
     updatedAt: row?.updated_at ?? null,
   };
 }
@@ -2511,6 +2769,15 @@ function saveAgentDigestSettings(input) {
     }
     next.gitAuthorEmails = [...new Set(input.gitAuthorEmails.map((email) => email.trim().toLowerCase()))];
   }
+  if (input.gitRepoDirs !== undefined) {
+    // Host paths as the user sees them; the collector maps them into its own view of the filesystem.
+    if (!Array.isArray(input.gitRepoDirs) || input.gitRepoDirs.length > 10
+      || input.gitRepoDirs.some((dir) => typeof dir !== "string" || dir.trim().length > 300
+        || !/^(?:~(?:\/|$)|\/|[A-Za-z]:[\\/])/.test(dir.trim()) || /[\0\n]/.test(dir))) {
+      throw invalid("Git 仓库目录必须是绝对路径或以 ~/ 开头，最多 10 个");
+    }
+    next.gitRepoDirs = [...new Set(input.gitRepoDirs.map((dir) => dir.trim().replace(/(.)[\\/]+$/, "$1")))];
+  }
   if (next.enabled && !resolveAgentDigestProvider(next)) {
     throw new HttpError(400, "AGENT_DIGEST_PROVIDER_REQUIRED", "请先配置带有 API Key 和模型的 AI 服务");
   }
@@ -2524,6 +2791,7 @@ function saveAgentDigestSettings(input) {
     next.instructions,
     JSON.stringify(next.excludedProjects),
     JSON.stringify(next.gitAuthorEmails),
+    JSON.stringify(next.gitRepoDirs),
     new Date().toISOString(),
   );
   if (next.enabled) ensureBuiltinCollectorToken();
@@ -2642,7 +2910,9 @@ function readDaysForAgent(from, to) {
     days.push({
       date,
       completedTasks: tasks.filter((task) => task.completed).map((task) => ({ title: task.title, project: task.project })),
-      openTasks: tasks.filter((task) => !task.completed).map((task) => ({ title: task.title, project: task.project })),
+      openTasks: tasks.filter((task) => !task.completed).map((task) => ({
+        title: task.title, project: task.project, ...(task.dueDate ? { due: [task.dueDate, task.dueTime].filter(Boolean).join(" ") } : {}),
+      })),
       workLogs: logs.map((log) => ({ title: log.title, project: log.project, origin: logOrigin(log) })),
       note,
       review: review ? { problems: review.blockers ?? "", tomorrow: review.next ?? "", completed: Boolean(review.completedAt) } : null,
@@ -2725,7 +2995,9 @@ function periodForAgent(periodType, date, project) {
       ...tasks.filter((task) => task.completed).map((task) => ({ date: task.date, title: task.title, project: task.project, origin: "完成待办" })),
       ...logs.map((log) => ({ date: log.date, title: log.title, project: log.project, origin: logOrigin(log) })),
     ].sort((a, b) => a.date.localeCompare(b.date)),
-    openItems: tasks.filter((task) => !task.completed).map((task) => ({ date: task.date, title: task.title, project: task.project })),
+    openItems: tasks.filter((task) => !task.completed).map((task) => ({
+      date: task.date, title: task.title, project: task.project, ...(task.dueDate ? { due: [task.dueDate, task.dueTime].filter(Boolean).join(" ") } : {}),
+    })),
     timeByProject: project ? [] : time.byProject,
     report: report?.content ?? "",
     notes: review?.blockers ?? "",
@@ -2831,7 +3103,33 @@ function agentDigestStatus() {
       };
     }),
     tokens: agentStatements.listTokens.all().map(projectAgentToken),
+    collector: readCollectorStatus(),
   };
+}
+
+const COLLECTOR_GIT_STATES = ["ok", "missing", "outside-mount", "no-emails"];
+
+function saveCollectorStatus(input) {
+  const invalid = () => new HttpError(400, "AGENT_COLLECTOR_STATUS_INVALID", "采集器状态格式无效");
+  if (!isPlainObject(input) || !Array.isArray(input.gitDirs) || input.gitDirs.length > 20) throw invalid();
+  const gitDirs = input.gitDirs.map((entry) => {
+    if (!isPlainObject(entry) || typeof entry.path !== "string" || entry.path.length > 300
+      || !COLLECTOR_GIT_STATES.includes(entry.state) || !Number.isInteger(entry.repos ?? 0) || (entry.repos ?? 0) < 0) {
+      throw invalid();
+    }
+    return { path: entry.path, state: entry.state, repos: entry.repos ?? 0 };
+  });
+  const status = { gitDirs, reportedAt: new Date().toISOString() };
+  statements.writeMetadata.run("collector_status", JSON.stringify(status));
+  return { ok: true };
+}
+
+function readCollectorStatus() {
+  try {
+    return JSON.parse(statements.readMetadata.get("collector_status")?.value ?? "null");
+  } catch {
+    return null;
+  }
 }
 
 function clipMiddle(text, limit) {
@@ -3502,7 +3800,13 @@ const server = createServer(async (request, response) => {
           maxReplyChars: AGENT_REPLY_CHARS,
           windowDays: AGENT_TURN_WINDOW_DAYS,
           gitAuthorEmails: digestSettings.gitAuthorEmails,
+          gitRepoDirs: digestSettings.gitRepoDirs,
         }, request);
+      }
+      if (url.pathname === "/api/agent/collector-status") {
+        if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+        requireAgentScope(tokenRow, "ingest");
+        return sendJson(response, 200, saveCollectorStatus(await readJsonBody(request)), request);
       }
       if (url.pathname === "/api/agent/turns") {
         if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
@@ -3545,6 +3849,16 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 200, applyPatch(validatePatch(await readJsonBody(request))));
       }
       throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+    }
+
+    if (url.pathname === "/api/tasks/daily") {
+      if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+      return sendJson(response, 200, prepareTasksForDay(await readJsonBody(request)));
+    }
+
+    if (url.pathname === "/api/tasks/settings") {
+      if (request.method !== "PUT") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+      return sendJson(response, 200, saveTaskSettings(await readJsonBody(request)));
     }
 
     if (url.pathname === "/api/projects") {

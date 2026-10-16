@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=31" />
+    <link rel="stylesheet" href="/styles.css?v=32" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -75,6 +75,28 @@
           </button>
         </div>
         <input id="import-file" type="file" accept=".json,application/json" hidden />
+        <dialog class="achievements-dialog task-settings-dialog" id="task-settings-dialog" aria-labelledby="task-settings-title">
+          <div class="achievements-head">
+            <div>
+              <p class="section-kicker">TODO SETTINGS</p>
+              <h2 id="task-settings-title">重复待办与提醒</h2>
+              <p>重复待办会在当天自动出现在列表里；错过的不会补到之后的日子。</p>
+            </div>
+            <button class="icon-button" id="task-settings-close" type="button" aria-label="关闭">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+          <div class="task-setting-row">
+            <div><strong>未完成待办自动顺延</strong><p>之前日期没完成的待办会移到今天，并标出已顺延几天。重复待办不顺延。</p></div>
+            <label class="switch"><input type="checkbox" id="task-rollover" role="switch" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="task-rollover-label">已开启</span></label>
+          </div>
+          <div class="task-setting-row">
+            <div><strong>浏览器提醒</strong><p id="task-notify-state">设置了提醒的待办到时会弹出系统通知。只在 MyDays 页面开着时提醒（放在后台标签页也可以）。</p></div>
+            <button class="soft-button" id="task-notify-enable" type="button">允许通知</button>
+          </div>
+          <h3 class="agent-digest-subtitle">重复待办 <span class="count-badge" id="recurrence-count">0</span></h3>
+          <div class="recurrence-list" id="recurrence-list"></div>
+        </dialog>
         <dialog class="achievements-dialog" id="achievements-dialog" aria-labelledby="achievements-title">
           <div class="achievements-head">
             <div>
@@ -291,12 +313,28 @@
                     <button class="capture-select-option" type="button" role="option" data-value="low" data-tone="low" aria-selected="false">稍后</button>
                   </div>
                 </div>
+                <button class="capture-more-button" id="capture-more-button" type="button" aria-expanded="false" aria-controls="capture-extra">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/></svg>
+                  <span id="capture-more-label">截止 / 重复</span>
+                </button>
                 <button class="soft-button capture-polish-button" id="capture-polish-button" type="button" disabled>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.1 3.1L16 7.2l-2.9 1.1L12 11.5l-1.1-3.2L8 7.2l2.9-1.1L12 3Zm6 8 1.2 3.3 3.3 1.2-3.3 1.2L18 20l-1.2-3.3-3.3-1.2 3.3-1.2L18 11ZM6 13l.9 2.1L9 16l-2.1.9L6 19l-.9-2.1L3 16l2.1-.9L6 13Z"/></svg>
                   <span>AI 润色</span>
                 </button>
                 <span class="capture-hint">Enter 保存</span>
                 <button class="primary-button" type="submit">添加</button>
+              </div>
+              <div class="capture-extra" id="capture-extra" hidden>
+                <label class="capture-extra-field" id="capture-due-date-field"><span>截止日期</span><input id="capture-due-date" type="date" /></label>
+                <label class="capture-extra-field"><span id="capture-due-time-label">截止时间</span><input id="capture-due-time" type="time" /></label>
+                <label class="capture-extra-field"><span>提醒</span><select id="capture-remind">
+                  <option value="">不提醒</option>
+                  <option value="0">准时</option>
+                  <option value="15">提前 15 分钟</option>
+                  <option value="60">提前 1 小时</option>
+                  <option value="1440">提前 1 天</option>
+                </select></label>
+                <label class="capture-extra-field"><span>重复</span><select id="capture-repeat"></select></label>
               </div>
             </form>
           </section>
@@ -372,10 +410,15 @@
                   <p class="section-kicker">FOCUS</p>
                   <h2>今日待办 <span class="count-badge" id="task-count">0</span></h2>
                 </div>
-                <div class="filter-tabs" role="group" aria-label="筛选待办">
-                  <button class="filter-tab active" type="button" data-filter="all">全部</button>
-                  <button class="filter-tab" type="button" data-filter="open">进行中</button>
-                  <button class="filter-tab" type="button" data-filter="done">已完成</button>
+                <div class="task-panel-tools">
+                  <div class="filter-tabs" role="group" aria-label="筛选待办">
+                    <button class="filter-tab active" type="button" data-filter="all">全部</button>
+                    <button class="filter-tab" type="button" data-filter="open">进行中</button>
+                    <button class="filter-tab" type="button" data-filter="done">已完成</button>
+                  </div>
+                  <button class="icon-button task-settings-button" id="task-settings-open" type="button" aria-label="重复待办与提醒设置" title="重复待办与提醒" aria-haspopup="dialog" aria-controls="task-settings-dialog">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/></svg>
+                  </button>
                 </div>
               </div>
               <div class="task-list" id="task-list"></div>
@@ -654,7 +697,9 @@
                 <label class="ai-field"><span>使用的 AI 服务</span><select id="agent-digest-provider"></select></label>
                 <label class="ai-field"><span>每日输入上限</span><div class="ai-input-suffix"><input id="agent-digest-max-input" type="number" min="5000" max="200000" step="1000" /><span>字</span></div><small>超出时自动压缩素材，用来控制模型开销。</small></label>
                 <label class="ai-field"><span>排除的项目</span><input id="agent-digest-excluded" maxlength="2000" autocomplete="off" placeholder="目录名，用逗号分隔" /><small>这些目录下的会话不会进入汇总。</small></label>
-                <label class="ai-field ai-field-wide"><span>Git 作者邮箱（可选）</span><input id="agent-digest-git-emails" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="you@example.com，多个用逗号分隔" /><small>填写后，采集器会把挂载目录中由这些邮箱提交的代码记录一并纳入整理；只读取提交说明和改动规模，不读取代码内容。</small></label>
+                <label class="ai-field ai-field-wide"><span>Git 仓库目录（可选）</span><textarea id="agent-digest-git-dirs" class="agent-digest-git-dirs" maxlength="3200" rows="2" spellcheck="false" placeholder="~/code&#10;/Users/me/work"></textarea><small>每行一个，最多 10 个；会在目录下三层内查找仓库。使用 Docker 时目录需在主目录内（或启动时用 MYDAYS_GIT_ROOT 指定的目录内）。</small></label>
+                <div class="agent-git-status ai-field-wide" id="agent-git-status" aria-live="polite" hidden></div>
+                <label class="ai-field ai-field-wide"><span>Git 作者邮箱</span><input id="agent-digest-git-emails" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="you@example.com，多个用逗号分隔" /><small>只采集这些邮箱的提交，只读取提交说明和改动规模，不读取代码内容。不填写时不扫描仓库。</small></label>
                 <label class="ai-field ai-field-wide"><span>整理偏好（可选）</span><textarea id="agent-digest-instructions" maxlength="2000" placeholder="例如：把调研和排查类工作也单独列出。"></textarea></label>
               </div>
               <div class="ai-prompt-actions">
@@ -665,7 +710,7 @@
               <div class="agent-digest-days" id="agent-digest-days" role="table" aria-label="最近 8 天的整理状态"></div>
               <div class="agent-digest-storage"><span id="agent-digest-stored"></span><button class="text-button danger-text" id="agent-digest-clear" type="button">清除已采集素材</button></div>
               <h3 class="agent-digest-subtitle">采集器与读取令牌</h3>
-              <p class="agent-digest-help">MyDays 和 agent 在同一台电脑时，在项目目录执行 <code>docker compose --profile agent-digest up -d</code> 启动随附的采集器，无需手动配置令牌。在其他电脑上采集时，创建一个令牌并用 <code>MYDAYS_URL</code>、<code>MYDAYS_TOKEN</code> 运行 <code>node collector/collector.mjs</code>。要纳入 Git 提交，启动时用 <code>MYDAYS_GIT_DIR</code> 指定存放仓库的目录，并在上方填写作者邮箱。</p>
+              <p class="agent-digest-help">MyDays 和 agent 在同一台电脑时，在项目目录执行 <code>docker compose --profile agent-digest up -d</code> 启动随附的采集器，无需手动配置令牌。在其他电脑上采集时，创建一个令牌并用 <code>MYDAYS_URL</code>、<code>MYDAYS_TOKEN</code> 运行 <code>node collector/collector.mjs</code>。要纳入 Git 提交，在上方填写仓库目录和作者邮箱，采集器下一轮（约 5 分钟内）生效。</p>
               <p class="agent-digest-help">让 agent 读取 MyDays：创建一个“读取”令牌，然后在 Claude Code 中执行 <code>claude mcp add mydays -e MYDAYS_URL=http://localhost:4173 -e MYDAYS_TOKEN=令牌 -- node MyDays项目目录/collector/mcp.mjs</code>；Codex 在 <code>~/.codex/config.toml</code> 的 <code>[mcp_servers.mydays]</code> 中配置同样的命令和环境变量。之后就可以问 agent“我上周做了什么”“帮我写本月周报”。读取令牌能看到全部待办、记录、笔记、复盘和周期汇报，但不能修改。</p>
               <form class="agent-token-form" id="agent-token-form">
                 <input id="agent-token-name" maxlength="60" autocomplete="off" placeholder="令牌名称，例如：办公室电脑" aria-label="令牌名称" required />
@@ -728,6 +773,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=33"></script>
+    <script src="/app.js?v=34"></script>
   </body>
 </html>

@@ -73,6 +73,7 @@ fs.mkdirSync(path.join(gitDir, "node_modules", "dep", ".git", "logs"), { recursi
 fs.writeFileSync(path.join(gitDir, "node_modules", "dep", ".git", "logs", "HEAD"), "");
 
 const received = [];
+const statusReports = [];
 let serverMode = "ok";
 let enabled = true;
 const server = createServer((request, response) => {
@@ -92,6 +93,10 @@ const server = createServer((request, response) => {
       return response.end("{}");
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (request.url === "/api/agent/collector-status") {
+      statusReports.push(body);
+      return response.end(JSON.stringify({ ok: true }));
+    }
     received.push(...body.turns);
     response.end(JSON.stringify({ accepted: body.turns.length }));
   });
@@ -182,6 +187,27 @@ const server = createServer((request, response) => {
     assert.equal(stats[0].unreadableLines, 1);
     assert.deepEqual(collector.adaptersFor(collector.readConfig({ ...env, CODEX_SESSIONS_DIR: path.join(root, "nope") })).map((adapter) => adapter.name), ["claude-code"], "不存在的目录对应的适配器必须跳过");
     assert.deepEqual(collector.parseGitLog("\x1eabc\x1f2026-10-16T10:00:00+08:00\x1f只有标题\x1f\n", "/repos/x").map((turn) => turn.reply), [""]);
+
+    assert.deepEqual(statusReports.at(-1), { gitDirs: [{ path: gitDir, state: "ok", repos: 1 }] }, "上报 Git 目录状态");
+
+    // Directories chosen in MyDays are host paths; in Docker they are mapped under the mounted root.
+    const docker = { hostHome: "/Users/me", gitHostRoot: "/Users/me", gitMountDir: root };
+    fs.mkdirSync(path.join(root, "work"), { recursive: true });
+    assert.deepEqual(collector.resolveGitDir(docker, "~/work"), { path: path.join(root, "work"), state: "ok" });
+    assert.deepEqual(collector.resolveGitDir(docker, "/Users/me/missing"), { path: path.join(root, "missing"), state: "missing" });
+    assert.deepEqual(collector.resolveGitDir(docker, "/opt/repos"), { path: null, state: "outside-mount" });
+    assert.deepEqual(collector.resolveGitDir(docker, "/Users/meow"), { path: null, state: "outside-mount" }, "前缀相同的兄弟目录不算在挂载范围内");
+    assert.deepEqual(collector.resolveGitDir({ hostHome: root, gitHostRoot: "", gitMountDir: "" }, "~/work"), { path: path.join(root, "work"), state: "ok" });
+    const mappedConfig = { ...collector.readConfig({ ...env, GIT_REPOS_DIR: "" }), hostHome: "/Users/me", gitHostRoot: "/Users/me", gitMountDir: path.dirname(gitDir) };
+    const mappedLimits = { maxPromptChars: 600, maxReplyChars: 1500, windowDays: 8, gitAuthorEmails: ["me@example.com"], gitRepoDirs: [`/Users/me/${path.basename(gitDir)}`, "/elsewhere"] };
+    const mappedStats = await collector.scan(mappedConfig, { limits: mappedLimits });
+    assert.deepEqual(mappedStats.find((stat) => stat.agent === "git")?.turns, 1, "使用设置页配置的目录");
+    assert.deepEqual(collector.collectorStatus(mappedConfig, mappedLimits).gitDirs, [
+      { path: `/Users/me/${path.basename(gitDir)}`, state: "ok", repos: 1 },
+      { path: "/elsewhere", state: "outside-mount", repos: 0 },
+    ]);
+    assert.equal(collector.collectorStatus(mappedConfig, { ...mappedLimits, gitAuthorEmails: [] }).gitDirs[0].state, "no-emails");
+    assert.equal(collector.adaptersFor(mappedConfig, { ...mappedLimits, gitRepoDirs: [] }).some((adapter) => adapter.name === "git"), false);
 
     console.log("MyDays collector test passed");
   } finally {

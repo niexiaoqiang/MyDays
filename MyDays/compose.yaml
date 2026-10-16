@@ -28,14 +28,17 @@ services:
       MYDAYS_TOKEN_FILE: /app/data/.collector-token
       CLAUDE_PROJECTS_DIR: /sources/claude
       CODEX_SESSIONS_DIR: /sources/codex
-      GIT_REPOS_DIR: /sources/git
+      # Git directories are chosen in MyDays settings; they must sit under MYDAYS_GIT_ROOT (default: your home folder).
+      GIT_HOST_ROOT: ${MYDAYS_GIT_ROOT:-${HOME}}
+      GIT_MOUNT_DIR: /sources/home
+      HOST_HOME: ${HOME}
       COLLECTOR_STATE_DIR: /state
     volumes:
       - mydays_data:/app/data:ro
       - ${MYDAYS_CLAUDE_DIR:-~/.claude/projects}:/sources/claude:ro
       - ${MYDAYS_CODEX_DIR:-~/.codex/sessions}:/sources/codex:ro
-      # Optional: a folder that contains your Git repositories (searched up to three levels deep).
-      - ${MYDAYS_GIT_DIR:-./collector/no-repos}:/sources/git:ro
+      # Read-only. Only the directories listed in MyDays settings are scanned, and only commit messages are read.
+      - ${MYDAYS_GIT_ROOT:-${HOME}}:/sources/home:ro
       - collector_state:/state
     healthcheck:
       disable: true

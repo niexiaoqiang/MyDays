@@ -6177,3 +6177,314 @@ p > .origin-chip:first-child {
     justify-content: flex-end;
   }
 }
+
+/* Todo deadlines, rollover and recurrences */
+.capture-more-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  background: var(--surface-container-low);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.capture-more-button[hidden] {
+  display: none;
+}
+
+.capture-more-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.capture-more-button:hover,
+.capture-more-button.active,
+.capture-more-button.has-value {
+  color: var(--green-dark);
+  background: var(--secondary-soft);
+}
+
+.capture-more-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--green), 0 0 0 3px var(--focus-ring);
+}
+
+.capture-extra,
+.entry-edit-schedule {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.capture-extra {
+  padding: 0 16px 16px;
+}
+
+.capture-extra[hidden],
+.capture-extra-field[hidden] {
+  display: none;
+}
+
+.entry-edit-schedule {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.capture-extra-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.capture-extra-field input,
+.capture-extra-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  outline: 0;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.capture-extra-field input:focus,
+.capture-extra-field select:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.schedule-chip,
+.overview-chip.due,
+.overview-chip.rolled,
+.overview-chip.repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--surface-container-high);
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.overview-chip.due,
+.overview-chip.rolled,
+.overview-chip.repeat {
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+}
+
+.schedule-chip svg,
+.overview-chip svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.schedule-chip.due.today,
+.schedule-chip.due.soon,
+.overview-chip.due.today,
+.overview-chip.due.soon {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
+.schedule-chip.due.overdue,
+.overview-chip.due.overdue {
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.schedule-chip.rolled,
+.overview-chip.rolled {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.schedule-chip.repeat,
+.overview-chip.repeat {
+  color: var(--green-dark);
+  background: var(--green-soft);
+}
+
+.task-item.completed .schedule-chip {
+  opacity: 0.7;
+}
+
+.task-meta {
+  flex-wrap: wrap;
+}
+
+.task-panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-settings-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.task-settings-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.task-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.task-setting-row strong {
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.task-setting-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.task-setting-row > :last-child {
+  flex: none;
+}
+
+.task-setting-row button[hidden] {
+  display: none;
+}
+
+.recurrence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recurrence-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.recurrence-row > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.recurrence-row strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recurrence-row small {
+  color: var(--muted-light);
+  font-size: 12px;
+}
+
+.recurrence-row > div:last-child {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.recurrence-row.paused strong {
+  color: var(--muted-light);
+}
+
+.agent-digest-git-dirs {
+  min-height: 64px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.agent-git-status {
+  display: grid;
+  gap: 6px;
+  margin-top: -4px;
+}
+
+.agent-git-status[hidden] {
+  display: none;
+}
+
+.agent-git-dir {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 12.5px;
+}
+
+.agent-git-dir code {
+  color: var(--ink);
+}
+
+.agent-git-dir.ok span {
+  color: var(--green-dark);
+}
+
+.agent-git-dir.warn span {
+  color: var(--orange);
+}
+
+.agent-git-dir.pending span,
+.agent-git-status small {
+  color: var(--muted-light);
+}
+
+@media (max-width: 720px) {
+  .capture-extra {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .entry-edit-schedule {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .task-setting-row {
+    align-items: flex-start;
+  }
+}
+
+.task-panel .panel-header h2 {
+  white-space: nowrap;
+}

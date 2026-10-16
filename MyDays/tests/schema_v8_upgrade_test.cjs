@@ -68,6 +68,8 @@ async function assertUpgraded() {
   const body = await (await fetch(`${baseUrl}/api/state`)).json();
   assert.equal(body.revision, 9, "v7 升级不得重置 revision");
   assert.equal(body.data.tasks[0].title, "升级前的待办");
+  assert.equal(body.data.tasks[0].dueDate, null, "旧待办没有截止日期");
+  assert.deepEqual(body.data.recurrences, []);
   assert.equal(body.data.logs.length, 2, "v7 记录必须保留");
   assert.deepEqual(body.data.logs.map((log) => log.source), ["", ""], "旧记录的来源必须为空");
   assert.equal(body.data.logs.find((log) => log.id === "v7-auto-log").sourceTaskId, "v7-task");
@@ -79,14 +81,19 @@ async function assertUpgraded() {
     await runServer(assertUpgraded);
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "9");
+    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
     assert.equal(migrated.prepare("PRAGMA table_info(logs)").all().filter((column) => column.name === "source").length, 1, "重复启动不得重复添加 source 列");
     assert.equal(migrated.prepare("PRAGMA table_info(agent_tokens)").all().filter((column) => column.name === "scope").length, 1, "重复启动不得重复添加 scope 列");
-    for (const table of ["agent_tokens", "agent_turns", "agent_digest_settings", "agent_digest_runs", "agent_time_daily"]) {
+    const taskColumns = migrated.prepare("PRAGMA table_info(tasks)").all().map((column) => column.name);
+    for (const column of ["origin_date", "due_date", "due_time", "remind_minutes", "recurrence_id"]) {
+      assert.equal(taskColumns.filter((name) => name === column).length, 1, `tasks.${column} 只能添加一次`);
+    }
+    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'task_rollover'").get().value, "1", "升级后默认开启顺延");
+    for (const table of ["agent_tokens", "agent_turns", "agent_digest_settings", "agent_digest_runs", "agent_time_daily", "task_recurrences"]) {
       assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)?.name, table);
     }
     migrated.close();
-    console.log("MyDays schema v7 to v9 upgrade test passed");
+    console.log("MyDays schema v7 to v10 upgrade test passed");
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
