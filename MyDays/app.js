@@ -26,7 +26,7 @@ const ROUTES = Object.freeze({
     title: "MyDays · 今日复盘",
     eyebrow: "DAILY REVIEW",
     heading: "收好今天，为明天留出起点",
-    copy: "整理成果、问题和下一步，让每一天都有清晰的落点。",
+    copy: "记下问题和明天的重点，让每一天都有清晰的落点。",
   },
   "/summary": {
     key: "summary",
@@ -100,9 +100,8 @@ const elements = {
   noteCount: document.querySelector("#note-count"),
   timelineList: document.querySelector("#timeline-list"),
   logCount: document.querySelector("#log-count"),
-  generateReview: document.querySelector("#generate-review"),
   reviewTitle: document.querySelector("#daily-review-title"),
-  reviewWins: document.querySelector("#review-wins"),
+  reviewDaySummary: document.querySelector("#review-day-summary"),
   reviewBlockers: document.querySelector("#review-blockers"),
   reviewNext: document.querySelector("#review-next"),
   reviewState: document.querySelector("#review-state"),
@@ -177,9 +176,7 @@ const elements = {
   summaryExportItems: [...document.querySelectorAll("#summary-export-menu [role='menuitem']")],
   summaryOpenItems: document.querySelector("#summary-open-items"),
   summaryReviewTitle: document.querySelector("#summary-review-title"),
-  summaryWins: document.querySelector("#summary-wins"),
   summaryBlockers: document.querySelector("#summary-blockers"),
-  summaryNextActions: document.querySelector("#summary-next-actions"),
   summaryReviewState: document.querySelector("#summary-review-state"),
   saveSummaryReview: document.querySelector("#save-summary-review"),
   generateAiSummary: document.querySelector("#generate-ai-summary"),
@@ -1166,13 +1163,13 @@ function renderOverview() {
   }
 
   const review = readDailyReview() ?? {};
-  const hasDraft = [review.wins, review.blockers, review.next].some((value) => value?.trim());
+  const hasDraft = [review.blockers, review.next].some((value) => value?.trim());
   const reviewState = review.completedAt ? "completed" : hasDraft ? "active" : "pending";
   const reviewContent = {
     pending: {
       status: "待复盘",
       title: "用三分钟收好今天",
-      copy: "整理成果、问题和明天的重点。",
+      copy: "记下今天的问题和明天的重点。",
       action: "开始复盘",
     },
     active: {
@@ -1598,7 +1595,15 @@ function writePeriodReport(context, project, report) {
 
 function renderReview() {
   const review = readDailyReview() ?? {};
-  setFieldValue(elements.reviewWins, review.wins ?? "");
+  const completedCount = state.tasks.filter((task) => task.date === selectedDate && task.completed).length;
+  const logCount = state.logs.filter((log) => log.date === selectedDate && !log.sourceTaskId).length;
+  const openTitles = makeDailyReviewDraft(selectedDate).next;
+  elements.reviewNext.placeholder = openTitles
+    ? `未完成的待办：\n${openTitles}`
+    : "明天优先推进什么？未完成的待办会自动列在这里。";
+  elements.reviewDaySummary.textContent = completedCount || logCount
+    ? `今天完成了 ${completedCount} 项待办，另有 ${logCount} 条工作记录，详见工作时间线。`
+    : "今天还没有工作记录。";
   setFieldValue(elements.reviewBlockers, review.blockers ?? "");
   setFieldValue(elements.reviewNext, review.next ?? "");
   elements.reviewTitle.textContent = "给今天一个交代";
@@ -2030,21 +2035,8 @@ function renderAchievements(items) {
   elements.summaryAchievementsNext.disabled = summaryAchievementPage >= totalPages - 1;
 }
 
-function makePeriodReviewDraft(context) {
-  const completed = context.tasks.filter((task) => task.completed).map((task) => task.title);
-  const manualLogs = context.logs.filter((log) => !log.sourceTaskId).map((log) => log.title);
-  const openTasks = context.tasks.filter((task) => !task.completed).map((task) => task.title);
-  return {
-    wins: [...completed, ...manualLogs].map((title) => `• ${title}`).join("\n"),
-    next: openTasks.map((title) => `• ${title}`).join("\n"),
-  };
-}
-
 function renderSummaryReview(context) {
   const review = readPeriodReview(context) ?? {};
-  const draft = makePeriodReviewDraft(context);
-  setFieldValue(elements.summaryWins, draft.wins);
-  setFieldValue(elements.summaryNextActions, draft.next);
   setFieldValue(elements.summaryBlockers, review.blockers ?? "");
   const report = readPeriodReport(context) ?? {};
   if (elements.summaryAiReport.value !== (report.content ?? "")) elements.summaryAiReport.value = report.content ?? "";
@@ -2091,9 +2083,7 @@ function saveSummaryReviewDraft({ defer = false } = {}) {
   const previous = readPeriodReview(context) ?? {};
   writePeriodReview(context, summaryProject, {
     ...previous,
-    wins: elements.summaryWins.value,
     blockers: elements.summaryBlockers.value,
-    next: elements.summaryNextActions.value,
   });
   const saveVersion = ++summarySaveVersion;
   elements.summaryReviewState.textContent = "保存中…";
@@ -2130,14 +2120,14 @@ function setAiSummaryLoading(loading) {
   aiSummaryLoading = loading;
   elements.generateAiSummary.disabled = loading;
   elements.generateAiSummary.classList.toggle("loading", loading);
-  elements.generateAiSummary.querySelector("span").textContent = loading ? "AI 正在整理…" : "AI 总结";
+  elements.generateAiSummary.querySelector("span").textContent = loading ? "AI 正在整理…" : "生成 AI 周报";
   elements.generateAiSummary.setAttribute("aria-busy", String(loading));
 }
 
 async function generateAiSummary() {
   if (aiSummaryLoading) return;
   const existingValue = elements.summaryAiReport.value;
-  if (existingValue.trim() && !window.confirm("AI 总结会覆盖当前「AI 总结」编辑框的内容，是否继续？")) return;
+  if (existingValue.trim() && !window.confirm("AI 周报会覆盖当前「AI 周报」编辑框的内容，是否继续？")) return;
   const context = getSummaryContext();
   const requestedPeriod = summaryPeriod;
   const requestedProject = summaryProject;
@@ -2155,7 +2145,7 @@ async function generateAiSummary() {
     const currentContext = getSummaryContext();
     if (summaryPeriod !== requestedPeriod || summaryProject !== requestedProject || currentContext.startKey !== context.startKey) {
       elements.summaryReviewState.textContent = "周期已切换，本次 AI 结果未填入";
-      showToast("周期已切换，请在当前周期重新生成 AI 总结");
+      showToast("周期已切换，请在当前周期重新生成 AI 周报");
       return;
     }
     if (elements.summaryAiReport.value !== existingValue) {
@@ -2166,14 +2156,14 @@ async function generateAiSummary() {
     elements.summaryAiReport.value = result.report;
     saveSummaryAiReportDraft({
       successMessage: `由 ${result.provider} · ${result.model} 生成并已保存`,
-      onSaved: () => showToast("AI 总结已生成并保存到 SQLite"),
+      onSaved: () => showToast("AI 周报已生成并保存"),
     });
   } catch (error) {
-    elements.summaryReviewState.textContent = "AI 总结失败，原内容未改变";
+    elements.summaryReviewState.textContent = "AI 周报生成失败，原内容未改变";
     if (["AI_DEFAULT_PROVIDER_MISSING", "AI_KEY_MISSING", "AI_KEY_UNREADABLE", "AI_MODEL_MISSING"].includes(error.code)) {
       showToast(`${error.message}，请前往 AI 设置`);
     } else {
-      showToast(`AI 总结失败：${error.message}`);
+      showToast(`AI 周报生成失败：${error.message}`);
     }
   } finally {
     setAiSummaryLoading(false);
@@ -2183,7 +2173,7 @@ async function generateAiSummary() {
 async function copySummaryReport() {
   const text = elements.summaryAiReport.value.trim();
   if (!text) {
-    showToast("还没有可复制的 AI 总结内容");
+    showToast("还没有可复制的 AI 周报内容");
     return;
   }
   try {
@@ -2195,15 +2185,14 @@ async function copySummaryReport() {
     elements.summaryAiReport.setSelectionRange(0, 0);
     if (!copied) throw new Error("copy-failed");
   }
-  showToast("AI 总结已复制");
+  showToast("AI 周报已复制");
 }
 
 function completeSummaryReview() {
   const context = getSummaryContext();
   writePeriodReview(context, summaryProject, {
-    wins: elements.summaryWins.value,
+    ...(readPeriodReview(context) ?? {}),
     blockers: elements.summaryBlockers.value,
-    next: elements.summaryNextActions.value,
     completedAt: new Date().toISOString(),
   });
   const saveVersion = ++summarySaveVersion;
@@ -2847,7 +2836,6 @@ function saveReviewDraft({ defer = false } = {}) {
   const previous = readDailyReview() ?? {};
   writeDailyReview(selectedDate, {
     ...previous,
-    wins: elements.reviewWins.value,
     blockers: elements.reviewBlockers.value,
     next: elements.reviewNext.value,
   });
@@ -2855,15 +2843,12 @@ function saveReviewDraft({ defer = false } = {}) {
   elements.reviewState.textContent = "草稿已自动保存";
 }
 
+// What got done already lives in the timeline, so the daily review only pre-fills "tomorrow" from open tasks.
 function makeDailyReviewDraft(date = selectedDate) {
-  const completed = state.tasks.filter((task) => task.date === date && task.completed);
-  const manualLogs = state.logs.filter((log) => log.date === date && !log.sourceTaskId);
   const openTasks = state.tasks.filter((task) => task.date === date && !task.completed);
-  const wins = [...completed.map((task) => task.title), ...manualLogs.map((log) => log.title)];
   return {
-    wins: wins.length ? wins.map((title) => `• ${title}`).join("\n") : "",
     next: openTasks.length ? openTasks.slice(0, 5).map((task) => `• ${task.title}`).join("\n") : "",
-    hasRecords: Boolean(completed.length || manualLogs.length || openTasks.length),
+    hasRecords: Boolean(openTasks.length),
   };
 }
 
@@ -2872,41 +2857,26 @@ function reconcileDailyReview(date, previousDraft) {
   const existingReview = readDailyReview(date);
   if (!existingReview) {
     if (!nextDraft.hasRecords) return false;
-    writeDailyReview(date, { wins: nextDraft.wins, blockers: "", next: nextDraft.next });
+    writeDailyReview(date, { wins: "", blockers: "", next: nextDraft.next });
     if (date === selectedDate) elements.reviewState.textContent = "已自动同步最新工作记录";
     return true;
   }
   const review = existingReview;
   let changed = false;
-  for (const field of ["wins", "next"]) {
-    if (!(review[field] ?? "").trim() || review[field] === previousDraft[field]) {
-      if (review[field] !== nextDraft[field]) {
-        review[field] = nextDraft[field];
-        changed = true;
-      }
+  if (!(review.next ?? "").trim() || review.next === previousDraft.next) {
+    if (review.next !== nextDraft.next) {
+      review.next = nextDraft.next;
+      changed = true;
     }
   }
   if (changed && date === selectedDate) elements.reviewState.textContent = "已自动同步最新工作记录";
   return changed;
 }
 
-function generateReview() {
-  const draft = makeDailyReviewDraft();
-
-  if (!draft.hasRecords) {
-    showToast("先记录一些工作，再来自动整理吧");
-    return;
-  }
-
-  elements.reviewWins.value = draft.wins;
-  elements.reviewNext.value = draft.next;
-  saveReviewDraft();
-  showToast("已根据今日全部记录整理初稿");
-}
-
 function completeReview() {
+  const previous = readDailyReview() ?? {};
   writeDailyReview(selectedDate, {
-    wins: elements.reviewWins.value,
+    ...previous,
     blockers: elements.reviewBlockers.value,
     next: elements.reviewNext.value,
     completedAt: new Date().toISOString(),
@@ -3331,11 +3301,10 @@ elements.dailyNote.addEventListener("input", () => {
   persist({ defer: true });
 });
 
-[elements.reviewWins, elements.reviewBlockers, elements.reviewNext].forEach((field) => {
+[elements.reviewBlockers, elements.reviewNext].forEach((field) => {
   field.addEventListener("input", () => saveReviewDraft({ defer: true }));
 });
 
-elements.generateReview.addEventListener("click", generateReview);
 elements.saveReview.addEventListener("click", completeReview);
 elements.agentDigestEnabled.addEventListener("change", toggleAgentDigest);
 elements.agentDigestSave.addEventListener("click", saveAgentDigestSettings);
@@ -3437,9 +3406,7 @@ elements.summaryProjectFilter.addEventListener("change", () => {
   summaryProject = elements.summaryProjectFilter.value;
   renderSummary();
 });
-[elements.summaryWins, elements.summaryBlockers, elements.summaryNextActions].forEach((field) => {
-  field.addEventListener("input", () => saveSummaryReviewDraft({ defer: true }));
-});
+elements.summaryBlockers.addEventListener("input", () => saveSummaryReviewDraft({ defer: true }));
 elements.summaryAchievementsPrev.addEventListener("click", () => {
   if (summaryAchievementPage > 0) {
     summaryAchievementPage -= 1;

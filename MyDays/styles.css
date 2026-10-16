@@ -5958,3 +5958,28 @@ p > .origin-chip:first-child {
     margin-top: 72px;
   }
 }
+
+/* Simplified reviews */
+.review-day-summary {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.review-fields.review-fields-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.summary-review-fields {
+  grid-template-columns: 1fr;
+}
+
+.summary-review-fields .summary-notes-field textarea {
+  min-height: 88px;
+}
+
+@media (max-width: 720px) {
+  .review-fields.review-fields-two {
+    grid-template-columns: 1fr;
+  }
+}

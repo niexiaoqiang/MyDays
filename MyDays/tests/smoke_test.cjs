@@ -334,17 +334,17 @@ function readStoredZipEntries(buffer) {
     throw new Error("工作记录删除功能失效");
   }
   const autoReviewAfterLog = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (!autoReviewAfterLog.data.reviews["2026-08-12"]?.wins.includes("检查移动端布局与交互")) {
-    throw new Error("新增工作记录后今日复盘没有自动同步");
+  if ((autoReviewAfterLog.data.reviews["2026-08-12"]?.wins ?? "").includes("检查移动端布局与交互")) {
+    throw new Error("今日复盘不应再自动复述时间线中的工作记录");
   }
   await page.getByRole("link", { name: "今日复盘" }).click();
-  await page.locator("#review-wins").fill("这是我手工修改的复盘");
+  await page.locator("#review-next").fill("这是我手工修改的复盘");
   await page.waitForTimeout(500);
   await page.getByRole("link", { name: "工作时间线" }).click();
   await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("手工复盘后的工作记录");
   await page.getByRole("button", { name: "添加" }).click();
   const stateAfterManualReview = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (stateAfterManualReview.data.reviews["2026-08-12"]?.wins !== "这是我手工修改的复盘") {
+  if (stateAfterManualReview.data.reviews["2026-08-12"]?.next !== "这是我手工修改的复盘") {
     throw new Error("新增工作记录覆盖了手工编辑的今日复盘");
   }
 
@@ -391,15 +391,9 @@ function readStoredZipEntries(buffer) {
     throw new Error("复盘页面内容隔离不正确");
   }
   if (await page.locator("#review-project-filter").count()) throw new Error("今日复盘不应显示项目分类");
-  if ((await page.locator("#review-wins").inputValue()) !== "这是我手工修改的复盘") throw new Error("今日综合复盘没有正确加载");
-  await page.getByRole("button", { name: "自动整理今日记录" }).click();
-  const reviewWins = await page.locator("#review-wins").inputValue();
-  if (!reviewWins.includes("从浏览器迁移的待办")
-    || !reviewWins.includes("完成 MyDays 第一版验收（已复核）")
-    || !reviewWins.includes("检查移动端布局与交互")
-    || !reviewWins.includes("手工复盘后的工作记录")) {
-    throw new Error("复盘自动整理结果不完整");
-  }
+  if ((await page.locator("#review-next").inputValue()) !== "这是我手工修改的复盘") throw new Error("今日综合复盘没有正确加载");
+  if (await page.locator("#review-wins, #generate-review").count()) throw new Error("今日复盘不应再显示“今天完成了什么”");
+  if (!(await page.locator("#review-day-summary").innerText()).includes("详见工作时间线")) throw new Error("今日复盘缺少当天记录概览");
   await page.locator("#review-blockers").fill("今日综合复盘问题");
   await page.getByRole("button", { name: "完成今日复盘" }).click();
   if (!(await page.locator("#review-state").innerText()).includes("已于")) throw new Error("复盘状态不正确");
@@ -644,9 +638,7 @@ function readStoredZipEntries(buffer) {
   const crossMonthRange = await page.locator("#summary-period-range").innerText();
   if (!crossMonthRange.includes("8/31") || !crossMonthRange.includes("9/6")) throw new Error("跨月周边界不正确");
   await page.getByRole("button", { name: "回到本周期" }).click();
-  if (!(await page.locator("#summary-wins").inputValue()).includes("完成 MyDays 第一版验收（已复核）")) {
-    throw new Error("周期复盘自动生成的主要成果不完整");
-  }
+  if (await page.locator("#summary-wins, #summary-next-actions").count()) throw new Error("周期复盘不应再重复显示成果和下一周期重点");
   await page.locator("#summary-blockers").fill("继续检查数据边界。");
   await page.getByRole("button", { name: "完成周度复盘" }).click();
   await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("已于"));

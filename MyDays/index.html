@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=27" />
+    <link rel="stylesheet" href="/styles.css?v=28" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -366,27 +366,18 @@
                 <div>
                   <p class="section-kicker">DAILY REVIEW</p>
                   <h2 id="daily-review-title">给今天一个交代</h2>
-                  <p>用三分钟收好今天，也为明天留一个清晰的起点。</p>
-                </div>
-                <div class="review-generation-actions">
-                  <button class="soft-button" id="generate-review" type="button">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3ZM18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"/></svg>
-                  自动整理今日记录
-                  </button>
+                  <p>今天做了什么已经在时间线里，这里只记下问题和明天的重点。</p>
                 </div>
               </div>
-              <div class="review-fields">
-                <label>
-                  <span><i class="review-dot green"></i> 今天完成了什么？</span>
-                  <textarea id="review-wins" maxlength="1200" placeholder="记录今天的成果和进展…"></textarea>
-                </label>
+              <p class="review-day-summary" id="review-day-summary"></p>
+              <div class="review-fields review-fields-two">
                 <label>
                   <span><i class="review-dot amber"></i> 遇到了什么问题？</span>
                   <textarea id="review-blockers" maxlength="1200" placeholder="有什么阻塞或值得复盘的地方？"></textarea>
                 </label>
                 <label>
                   <span><i class="review-dot blue"></i> 明天最重要的事</span>
-                  <textarea id="review-next" maxlength="1200" placeholder="明天优先推进什么？"></textarea>
+                  <textarea id="review-next" maxlength="1200" placeholder="明天优先推进什么？未完成的待办会自动列在这里。"></textarea>
                 </label>
               </div>
               <div class="review-footer">
@@ -518,24 +509,22 @@
                 <div>
                   <p class="section-kicker">PERIOD REVIEW</p>
                   <h2 id="summary-review-title">本周复盘</h2>
-                  <p>「主要成果」「下一周期重点」根据周期记录自动生成；「问题与反思」和「AI 总结」可手动编辑，保存到 SQLite。</p>
+                  <p>成果和未完成事项见上方列表。「AI 周报」根据周期记录生成，可直接编辑；「补充说明」用来记下问题与反思。</p>
                 </div>
                 <div class="summary-review-actions">
                   <button class="primary-button summary-ai-button" id="generate-ai-summary" type="button">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
-                    <span>AI 总结</span>
+                    <span>生成 AI 周报</span>
                   </button>
                 </div>
               </div>
               <div class="summary-ai-notice" id="summary-ai-notice">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.4c0 4.4 3.2 8.1 7.5 9.6 4.3-1.5 7.5-5.2 7.5-9.6V6L12 3Z"/><path d="M9 12.2 11 14l4-4"/></svg>
-                <span>使用 AI 总结时，当前周期的工作事项会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。AI 总结只写入下方「AI 总结」框，不会修改上面的复盘内容。</span>
+                <span>生成 AI 周报时，当前周期的工作事项会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。结果只写入下方「AI 周报」框。</span>
               </div>
               <div class="review-fields summary-review-fields">
-                <label><span><i class="review-dot green"></i> 主要成果<em class="review-auto">自动</em></span><textarea id="summary-wins" maxlength="4000" readonly placeholder="根据周期记录自动生成"></textarea></label>
-                <label><span><i class="review-dot amber"></i> 问题与反思</span><textarea id="summary-blockers" maxlength="4000" placeholder="遇到了什么问题，有哪些值得反思？"></textarea></label>
-                <label><span><i class="review-dot blue"></i> 下一周期重点<em class="review-auto">自动</em></span><textarea id="summary-next-actions" maxlength="4000" readonly placeholder="根据周期记录自动生成"></textarea></label>
-                <label class="summary-ai-report-field"><span><i class="review-dot green"></i> AI 总结<button class="text-button" id="copy-summary-report" type="button">复制</button></span><textarea id="summary-ai-report" maxlength="20000" placeholder="点击上方「AI 总结」根据周期记录生成，或直接在这里编写；内容自动保存，可编辑。"></textarea></label>
+                <label class="summary-ai-report-field"><span><i class="review-dot green"></i> AI 周报<button class="text-button" id="copy-summary-report" type="button">复制</button></span><textarea id="summary-ai-report" maxlength="20000" placeholder="点击上方「生成 AI 周报」根据周期记录生成，或直接在这里编写；内容自动保存，可编辑。"></textarea></label>
+                <label class="summary-notes-field"><span><i class="review-dot amber"></i> 补充说明<em class="review-auto">可选</em></span><textarea id="summary-blockers" maxlength="4000" placeholder="这个周期遇到了什么问题，有哪些值得反思？"></textarea></label>
               </div>
               <div class="review-footer">
                 <span id="summary-review-state">内容会自动保存</span>
@@ -686,6 +675,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=28"></script>
+    <script src="/app.js?v=29"></script>
   </body>
 </html>
