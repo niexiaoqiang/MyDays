@@ -132,36 +132,27 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 
 这个功能把你在 AI agent 中完成的工作，每天自动整理成几条「主要工作」写入时间线。它由两部分组成：
 
-- **采集器**：运行在有 agent 的电脑上，读取本机会话文件，只提取你的提问和 agent 每轮的最终答复（不含工具调用和工具输出），隐藏常见形态的密钥后推送给 MyDays。目前支持 Claude Code 和 Codex。
+- **采集器**：运行在有 agent 的电脑上（Mac 上推荐状态栏应用 MyDaysBar，其他电脑用随附的 Node 版 `collector/collector.mjs`），读取本机会话文件，只提取你的提问和 agent 每轮的最终答复（不含工具调用和工具输出），隐藏常见形态的密钥后推送给 MyDays。目前支持 Claude Code 和 Codex。
 - **MyDays 服务端**：暂存这些摘录，每天到设定时间（默认 18:30）用你配置的 AI 服务按当天实际的工作主题整理成若干条记录（工作少时一两条，多时最多 12 条），带「AI 整理」标记写入当天时间线。当晚的工作会在第二天定稿时补上；服务没运行的日期，启动后自动补跑最近 7 天。
 
 ### 开启步骤
 
 1. 在右上角 MY → 设置 → AI 服务中，先配置一个带 API Key 的 AI 服务。
 2. 在同一页面的「Agent 工作汇总」里打开开关，确认时区和整理时间。
-3. MyDays 和 agent 在同一台电脑时，启动随附的采集器：
+3. 在「设置 → 连接与令牌」创建一个用途为“采集”的令牌，然后选择一种采集器：
 
-   ```bash
-   docker compose --profile agent-digest up -d --build
-   ```
+   - **Mac：MyDaysBar（推荐）**。状态栏应用，源码在独立仓库 `mydays-mac`，用其中的 `./scripts/build-app.sh --install` 构建并安装到 `/Applications`。点击状态栏图标 → 设置…，填入 MyDays 地址和令牌后保存。它直接读取本机的 `~/.claude/projects`、`~/.codex/sessions` 和 Git 仓库。
+   - **其他电脑或 Linux：Node 版采集器**（需要 Node.js 24）。在那台电脑上取得本项目代码后运行：
 
-   它默认以只读方式挂载 `~/.claude/projects` 和 `~/.codex/sessions`，令牌由 MyDays 自动发放。目录不在默认位置时，用 `MYDAYS_CLAUDE_DIR`、`MYDAYS_CODEX_DIR` 指定。
+     ```bash
+     MYDAYS_URL=https://mydays.example.com MYDAYS_TOKEN=mdk_xxx node collector/collector.mjs
+     ```
 
-   想把本人的 Git 提交也纳入整理，在「设置 → Agent 汇总」填写“仓库目录”（每行一个，向下查找三层）和 Git 作者邮箱，采集器下一轮生效，设置页会显示每个目录找到了几个仓库。采集器只读取这些邮箱提交的提交说明和改动规模，不读取代码内容；提交不计入 AI 协作时间。
+     会话目录不在默认位置时，用 `CLAUDE_PROJECTS_DIR`、`CODEX_SESSIONS_DIR` 指定。
 
-   Docker 中的采集器会把你的主目录只读挂载进去，因此仓库目录需要在主目录内。想缩小或改变可见范围，启动时用 `MYDAYS_GIT_ROOT` 指定：
+4. 想把本人的 Git 提交也纳入整理，在「设置 → Agent 汇总」填写“仓库目录”（运行采集器那台电脑上的路径，每行一个，向下查找三层）和 Git 作者邮箱，采集器下一轮生效，设置页会显示每个目录找到了几个仓库。采集器只读取这些邮箱提交的提交说明和改动规模，不读取代码内容；提交不计入 AI 协作时间。
 
-   ```bash
-   MYDAYS_GIT_ROOT=~/code docker compose --profile agent-digest up -d --build
-   ```
-
-4. agent 在另一台电脑上时，在「设置 → 连接与令牌」创建一个令牌，然后在那台电脑上运行（需要 Node.js 24）：
-
-   ```bash
-   MYDAYS_URL=https://mydays.example.com MYDAYS_TOKEN=mdk_xxx node collector/collector.mjs
-   ```
-
-接入前可以先看采集规模，这个命令只打印各 agent 的文件数、轮次数和字数，不发送任何内容：
+接入前可以先看采集规模，这个命令（MyDaysBar 对应 `mydays-collect --dry-run`）只打印各 agent 的文件数、轮次数和字数，不发送任何内容：
 
 ```bash
 node collector/collector.mjs --dry-run
@@ -191,12 +182,12 @@ MyDays 提供一个只读的 MCP 服务，Claude Code、Codex 等 agent 接入�
 
 ### 需要知道的
 
-- 关闭开关后，服务端拒收素材、不再调用 AI，采集器也不再读取任何会话文件。停止采集器：`docker compose --profile agent-digest down`。
+- 关闭开关后，服务端拒收素材、不再调用 AI，采集器也不再读取任何会话文件。
 - 会话摘录在 MyDays 中暂存 30 天，可在设置页一键清除；它们不进入页面的 JSON 导出备份，但包含在 Docker 数据卷备份里。
 - 摘录会发送给你选择的 AI 服务。密钥隐藏基于规则匹配，无法保证覆盖所有敏感内容；可以按目录名排除不想汇总的项目。
 - 汇总条目和普通记录一样可以编辑、删除。编辑过的条目归你所有，之后的重新整理不会覆盖它。
 - 模型开销与当天的对话量成正比，可以在设置页限制每日输入字数，并为这个功能单独选择一个更便宜的 AI 服务。
-- 采集器只在 macOS + Docker Desktop 上验证过。Linux 上需要保证容器用户（uid 1000）能读取会话文件；宿主机上不存在的目录会被 Docker 创建为空目录。
+- MyDaysBar 需要 macOS 15+；Node 版采集器以运行它的用户身份读取会话文件，需要对这些目录有读权限。
 - 功能按单用户设计：多人共用一个 MyDays 时，汇总会进入同一条时间线。
 
 ## 公网受邀测试部署

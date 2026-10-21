@@ -24,10 +24,7 @@ export function readConfig(env = process.env) {
     claudeDir: env.CLAUDE_PROJECTS_DIR ?? path.join(home, ".claude", "projects"),
     codexDir: env.CODEX_SESSIONS_DIR ?? path.join(home, ".codex", "sessions"),
     gitDir: env.GIT_REPOS_DIR ?? "",
-    // In Docker, GIT_HOST_ROOT (a host folder) is mounted at GIT_MOUNT_DIR so directories chosen in MyDays can be found.
-    hostHome: env.HOST_HOME || home,
-    gitHostRoot: (env.GIT_HOST_ROOT ?? "").replace(/(.)\/+$/, "$1"),
-    gitMountDir: env.GIT_MOUNT_DIR ?? "",
+    home,
     gitAuthorEmails: (env.GIT_AUTHOR_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean),
     stateDir: env.COLLECTOR_STATE_DIR ?? path.join(home, ".mydays", "collector"),
     intervalSeconds: Math.max(10, Number.parseInt(env.COLLECTOR_INTERVAL_SECONDS ?? "300", 10) || 300),
@@ -204,14 +201,10 @@ function listCodexFiles(dir, depth = 0) {
 
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "vendor", "dist", "build", "target", ".venv", "venv", "Library"]);
 
-// Maps a directory configured in MyDays (as seen on the host) to a path this process can read.
+// Expands "~" in a directory configured in MyDays; the collector runs on the machine that holds the repositories.
 export function resolveGitDir(config, hostPath) {
-  const expanded = hostPath === "~" || hostPath.startsWith("~/") ? path.join(config.hostHome, hostPath.slice(1)) : hostPath;
-  if (!config.gitHostRoot || !config.gitMountDir) return { path: expanded, state: existsSync(expanded) ? "ok" : "missing" };
-  const relative = path.relative(config.gitHostRoot, expanded);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return { path: null, state: "outside-mount" };
-  const mapped = path.join(config.gitMountDir, relative);
-  return { path: mapped, state: existsSync(mapped) ? "ok" : "missing" };
+  const expanded = hostPath === "~" || hostPath.startsWith("~/") ? path.join(config.home, hostPath.slice(1)) : hostPath;
+  return { path: expanded, state: existsSync(expanded) ? "ok" : "missing" };
 }
 
 export function gitDirectories(config, limits = DEFAULT_LIMITS) {
@@ -468,7 +461,7 @@ async function main() {
   const log = (message) => console.log(`${new Date().toISOString()} ${message}`);
   if (args.has("--dry-run")) {
     const stats = await scan(config);
-    console.log(`Session directories: claude=${config.claudeDir} codex=${config.codexDir} git=${gitDirectories(config).map((dir) => dir.path ?? dir.hostPath).join(",") || "(not set)"}`);
+    console.log(`Session directories: claude=${config.claudeDir} codex=${config.codexDir} git=${gitDirectories(config).map((dir) => dir.path).join(",") || "(not set)"}`);
     if (!stats.length) console.log("No supported session directory was found.");
     for (const stat of stats) {
       console.log(`${stat.agent}: ${stat.files} recent files, ${stat.sessions} sessions with human turns, ${stat.turns} turns, ${stat.chars} chars after trimming, ${stat.unreadableLines} unreadable lines`);

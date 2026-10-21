@@ -190,21 +190,19 @@ const server = createServer((request, response) => {
 
     assert.deepEqual(statusReports.at(-1), { gitDirs: [{ path: gitDir, state: "ok", repos: 1 }] }, "上报 Git 目录状态");
 
-    // Directories chosen in MyDays are host paths; in Docker they are mapped under the mounted root.
-    const docker = { hostHome: "/Users/me", gitHostRoot: "/Users/me", gitMountDir: root };
+    // Directories chosen in MyDays are used as-is, with "~" expanded to the home folder.
     fs.mkdirSync(path.join(root, "work"), { recursive: true });
-    assert.deepEqual(collector.resolveGitDir(docker, "~/work"), { path: path.join(root, "work"), state: "ok" });
-    assert.deepEqual(collector.resolveGitDir(docker, "/Users/me/missing"), { path: path.join(root, "missing"), state: "missing" });
-    assert.deepEqual(collector.resolveGitDir(docker, "/opt/repos"), { path: null, state: "outside-mount" });
-    assert.deepEqual(collector.resolveGitDir(docker, "/Users/meow"), { path: null, state: "outside-mount" }, "前缀相同的兄弟目录不算在挂载范围内");
-    assert.deepEqual(collector.resolveGitDir({ hostHome: root, gitHostRoot: "", gitMountDir: "" }, "~/work"), { path: path.join(root, "work"), state: "ok" });
-    const mappedConfig = { ...collector.readConfig({ ...env, GIT_REPOS_DIR: "" }), hostHome: "/Users/me", gitHostRoot: "/Users/me", gitMountDir: path.dirname(gitDir) };
-    const mappedLimits = { maxPromptChars: 600, maxReplyChars: 1500, windowDays: 8, gitAuthorEmails: ["me@example.com"], gitRepoDirs: [`/Users/me/${path.basename(gitDir)}`, "/elsewhere"] };
+    assert.deepEqual(collector.resolveGitDir({ home: root }, "~/work"), { path: path.join(root, "work"), state: "ok" });
+    assert.deepEqual(collector.resolveGitDir({ home: root }, "~"), { path: root, state: "ok" });
+    assert.deepEqual(collector.resolveGitDir({ home: root }, path.join(root, "missing")), { path: path.join(root, "missing"), state: "missing" });
+    const mappedConfig = { ...collector.readConfig({ ...env, GIT_REPOS_DIR: "" }), home: path.dirname(gitDir) };
+    const missingDir = path.join(root, "elsewhere");
+    const mappedLimits = { maxPromptChars: 600, maxReplyChars: 1500, windowDays: 8, gitAuthorEmails: ["me@example.com"], gitRepoDirs: [`~/${path.basename(gitDir)}`, missingDir] };
     const mappedStats = await collector.scan(mappedConfig, { limits: mappedLimits });
     assert.deepEqual(mappedStats.find((stat) => stat.agent === "git")?.turns, 1, "使用设置页配置的目录");
     assert.deepEqual(collector.collectorStatus(mappedConfig, mappedLimits).gitDirs, [
-      { path: `/Users/me/${path.basename(gitDir)}`, state: "ok", repos: 1 },
-      { path: "/elsewhere", state: "outside-mount", repos: 0 },
+      { path: `~/${path.basename(gitDir)}`, state: "ok", repos: 1 },
+      { path: missingDir, state: "missing", repos: 0 },
     ]);
     assert.equal(collector.collectorStatus(mappedConfig, { ...mappedLimits, gitAuthorEmails: [] }).gitDirs[0].state, "no-emails");
     assert.equal(collector.adaptersFor(mappedConfig, { ...mappedLimits, gitRepoDirs: [] }).some((adapter) => adapter.name === "git"), false);

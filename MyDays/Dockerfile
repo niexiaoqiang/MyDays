@@ -6,11 +6,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/app/data
 
-# git is only used by the optional collector to read the user's own commits from read-only mounted repositories.
-RUN apk add --no-cache git && mkdir -p /app/data /state && chown node:node /app/data /state
+RUN mkdir -p /app/data && chown node:node /app/data
 
 COPY --chown=node:node package.json server.js index.html login.html login.js theme.js styles.css app.js ./
-COPY --chown=node:node collector ./collector
 
 USER node
 
