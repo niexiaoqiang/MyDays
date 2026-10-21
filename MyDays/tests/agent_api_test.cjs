@@ -19,7 +19,7 @@ const mock = createServer((request, response) => {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const system = body.messages[0].content;
     const kind = system.includes("个人工作记录整理助手") ? "final" : "project";
-    aiCalls.push({ kind, user: body.messages[1].content, maxTokens: body.max_tokens });
+    aiCalls.push({ kind, system, user: body.messages[1].content, maxTokens: body.max_tokens });
     response.setHeader("Content-Type", "application/json");
     if (aiMode === "fail") {
       response.statusCode = 500;
@@ -32,7 +32,9 @@ const mock = createServer((request, response) => {
       ? "完成了该项目的主要改动并通过测试。"
       : aiMode === "badjson"
         ? "今天做了很多事情"
-        : JSON.stringify({ items: [
+        : typeof aiMode === "number"
+          ? JSON.stringify({ items: Array.from({ length: aiMode }, (_, index) => ({ title: `第 ${index + 1} 项工作主题`, project: "工作" })) })
+          : JSON.stringify({ items: [
           { title: `完成汇总接口联调 ${aiCalls.length}`, project: "工作" },
           { title: "梳理采集器的提取规则", project: "不存在的项目" },
         ] });
@@ -221,6 +223,8 @@ async function digestLogs(date) {
     assert.equal(finalCall.user.includes("- 手动记录的工作"), true, "当天已有记录必须作为去重上下文");
     assert.equal(finalCall.user.includes("第 "), true);
     assert.equal(finalCall.maxTokens, 2048);
+    assert.equal(finalCall.system.includes("不要凑固定条数"), true, "提示词必须要求按实际工作决定条数");
+    assert.equal(/3 到 5 条|5 条/.test(finalCall.system), false, "提示词不得再锚定固定条数");
     assert.equal(aiCalls.filter((call) => call.kind === "project").length, 0, "素材较少时只调用一次模型");
 
     const callsAfterFirst = aiCalls.length;
@@ -281,6 +285,24 @@ async function digestLogs(date) {
     aiMode = "ok";
     result = await runDigest(today);
     assert.equal(result.body.days.find((entry) => entry.date === today).run.status, "ok");
+
+    // Item count follows the day's work: fewer or more than 5 pass through, runaway output is capped at 12.
+    // Driven by automatic re-finalization because manual runs are rate-limited.
+    const countDate = dateKey(2);
+    for (const [index, [count, expected]] of [[1, 1], [8, 8], [15, 12]].entries()) {
+      aiMode = count;
+      result = await pushTurns(token, [turn(2, { sessionId: "count-session" })]);
+      assert.deepEqual(result.body, { accepted: 1 });
+      const run = await waitFor(async () => {
+        const current = (await statusDay(countDate)).run;
+        return current?.status === "ok" && current.turnCount === index + 1 ? current : null;
+      }, `digest with ${count} items`);
+      assert.equal(run.itemCount, expected);
+      const countLogs = await digestLogs(countDate);
+      assert.equal(countLogs.length, expected, `模型返回 ${count} 条时应写入 ${expected} 条`);
+      if (count > expected) assert.equal(countLogs.some((log) => log.title === `第 ${expected + 1} 项工作主题`), false, "超出上限时舍弃排在后面的条目");
+    }
+    aiMode = "ok";
 
     // Time estimate: turns closer than 20 minutes merge into one block; parallel projects count once in the total.
     const timeDate = dateKey(5);
@@ -359,7 +381,7 @@ async function digestLogs(date) {
     assert.equal(aiCalls.length, callsWhenDisabled, "关闭后不得再调用模型");
 
     result = await request("/api/agent-digest/turns", { method: "DELETE" });
-    assert.equal(result.body.deleted, 23);
+    assert.equal(result.body.deleted, 26);
     const exported = JSON.stringify((await request("/api/state")).body);
     assert.equal(exported.includes("mdk_"), false);
     assert.equal(exported.includes("agent_turns"), false);

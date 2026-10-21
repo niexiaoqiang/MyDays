@@ -20,7 +20,8 @@ const AGENT_PROMPT_CHARS = 600;
 const AGENT_REPLY_CHARS = 1500;
 const MAX_AGENT_TURNS_PER_REQUEST = 100;
 const MAX_ACTIVE_AGENT_TOKENS = 20;
-const MAX_AGENT_DIGEST_ITEMS = 10;
+// Guard against runaway output; the prompt asks for one item per distinct piece of work.
+const MAX_AGENT_DIGEST_ITEMS = 12;
 const AGENT_DIGEST_SINGLE_PASS_CHARS = 12000;
 const AGENT_DIGEST_MAX_ATTEMPTS = 3;
 const AGENT_DIGEST_RETRY_MS = 60 * 60 * 1000;
@@ -3303,10 +3304,11 @@ function parseAgentDigestItems(text, projectOptions, forbiddenValues = []) {
   } catch {
     throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务没有返回有效的汇总结构");
   }
-  if (!isPlainObject(parsed) || !Array.isArray(parsed.items) || parsed.items.length > MAX_AGENT_DIGEST_ITEMS) {
+  if (!isPlainObject(parsed) || !Array.isArray(parsed.items)) {
     throw new HttpError(502, "AI_RESPONSE_INVALID", "AI 服务返回的汇总结构无效");
   }
-  return parsed.items.map((item) => {
+  // Items come ordered by importance, so overflow drops the least important ones instead of failing the day.
+  return parsed.items.slice(0, MAX_AGENT_DIGEST_ITEMS).map((item) => {
     const title = isPlainObject(item) && typeof item.title === "string" ? item.title.trim() : "";
     if (!title || title.length > MAX_CAPTURE_ENTRY_LENGTH || /[\r\n]/.test(title)
       || forbiddenValues.some((secret) => secret && title.includes(secret))) {
@@ -3323,7 +3325,8 @@ const AGENT_DIGEST_RULES = [
   "规则：",
   "1. 按目标合并：同一件事跨多轮、多个会话或多个助手完成的，合并成一条。",
   "2. 写结果，不写过程。例如写“完成增量保存接口并上线”，不要写“修改了某文件、加了测试、修了两个问题”。",
-  "3. 通常 3 到 5 条，按实际工作量决定：只做了一件事就只写一条，最多 10 条。",
+  "3. 条数由当天实际的工作决定，不要凑固定条数：每个独立的工作主题或项目写一条，相近的内容合并，不要为了凑数把一件事拆成几条。",
+  `   只做了一两件事就只写一两条；项目多、工作多的日子可以多写几条，但最多 ${MAX_AGENT_DIGEST_ITEMS} 条。条目按重要性从高到低排列。`,
   "4. 琐碎的工作（改错别字、调格式、单纯的提问、失败后放弃的尝试）并入相近条目或舍弃。",
   "5. 不要重复“当天已有记录”里已经出现的内容。",
   "6. 只依据素材，不虚构、不夸大；素材显示尚未完成的，写成进展而不是完成。",
