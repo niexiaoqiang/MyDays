@@ -7,51 +7,45 @@ const ROUTES = Object.freeze({
     eyebrow: "TODAY",
     copy: "把重要的事留在这里，让大脑轻一点。",
   },
-  "/tasks": {
-    key: "tasks",
-    title: "MyDays · 待办事项",
-    eyebrow: "TASKS",
-    heading: "把要做的事，一件件推进",
-    copy: "聚焦当天需要完成的事项，完成后会自动进入工作时间线。",
-  },
-  "/timeline": {
-    key: "timeline",
-    title: "MyDays · 工作时间线",
-    eyebrow: "TIMELINE",
-    heading: "看见今天走过的路",
-    copy: "按时间回看完成的工作，也可以随手记下刚刚发生的进展。",
-  },
-  "/review": {
-    key: "review",
-    title: "MyDays · 今日复盘",
-    eyebrow: "DAILY REVIEW",
-    heading: "收好今天，为明天留出起点",
-    copy: "记下问题和明天的重点，让每一天都有清晰的落点。",
+  "/upcoming": {
+    key: "upcoming",
+    title: "MyDays · 即将到期",
+    eyebrow: "UPCOMING",
+    heading: "接下来要到期的事",
+    copy: "已逾期、今天到期和之后两周的待办。",
   },
   "/summary": {
     key: "summary",
     title: "MyDays · 周期汇总",
     eyebrow: "PERIOD SUMMARY",
     heading: "回顾一段时间，看见持续的进展",
-    copy: "按周、月、季度或年度整理成果，并为下一阶段留下清晰的方向。",
+    copy: "按周、月、季度、年度或任意时间段整理成果，并为下一阶段留下清晰的方向。",
   },
   "/settings": {
     key: "ai-settings",
     title: "MyDays · 设置",
     eyebrow: "SETTINGS",
     heading: "设置",
-    copy: "外观、项目、待办习惯、AI 服务和 Agent 工作汇总。",
+    copy: "外观、项目、数据备份、AI 服务和 Agent 工作汇总。",
   },
 });
 
-// Old links to /ai-settings land on the AI tab of the settings page.
-const ROUTE_ALIASES = Object.freeze({ "/ai-settings": ["/settings", "ai"] });
+// Old links land on their new place: /ai-settings on the AI settings tab, the former
+// tasks / timeline / review pages on the matching section of the today page.
+const ROUTE_ALIASES = Object.freeze({
+  "/ai-settings": ["/settings", "ai"],
+  "/tasks": ["/", "tasks"],
+  "/timeline": ["/", "timeline"],
+  "/review": ["/", "review"],
+});
 
 const PERIODS = Object.freeze({
-  week: { reviewLabel: "周度" },
-  month: { reviewLabel: "月度" },
-  quarter: { reviewLabel: "季度" },
-  year: { reviewLabel: "年度" },
+  day: { reportLabel: "日报" },
+  week: { reportLabel: "周报" },
+  month: { reportLabel: "月报" },
+  quarter: { reportLabel: "季报" },
+  year: { reportLabel: "年报" },
+  range: { reportLabel: "成果总结" },
 });
 
 const elements = {
@@ -74,6 +68,7 @@ const elements = {
   welcomeCopy: document.querySelector("#welcome-copy"),
   scoreRing: document.querySelector("#score-ring"),
   scoreNumber: document.querySelector("#score-number"),
+  scoreLabel: document.querySelector("#score-label"),
   captureForm: document.querySelector("#capture-form"),
   captureInput: document.querySelector("#capture-input"),
   captureTabs: [...document.querySelectorAll(".capture-tab")],
@@ -88,43 +83,39 @@ const elements = {
   prioritySelect: document.querySelector("#priority-select"),
   priorityField: document.querySelector(".priority-field"),
   captureSelects: [...document.querySelectorAll("[data-capture-select]")],
-  overviewTaskList: document.querySelector("#overview-task-list"),
-  overviewTaskCount: document.querySelector("#overview-task-count"),
-  overviewLogList: document.querySelector("#overview-log-list"),
-  overviewLogCount: document.querySelector("#overview-log-count"),
-  overviewReviewStatus: document.querySelector("#overview-review-status"),
-  overviewReviewTitle: document.querySelector("#overview-review-title"),
-  overviewReviewCopy: document.querySelector("#overview-review-copy"),
-  overviewReviewLink: document.querySelector("#overview-review-link"),
   taskList: document.querySelector("#task-list"),
   taskCount: document.querySelector("#task-count"),
-  filterTabs: [...document.querySelectorAll(".filter-tab")],
-  dailyNote: document.querySelector("#daily-note"),
-  noteCount: document.querySelector("#note-count"),
+  filterTabs: [...document.querySelectorAll("[data-filter]")],
   timelineList: document.querySelector("#timeline-list"),
   logCount: document.querySelector("#log-count"),
-  reviewTitle: document.querySelector("#daily-review-title"),
   reviewDaySummary: document.querySelector("#review-day-summary"),
-  reviewBlockers: document.querySelector("#review-blockers"),
-  reviewNext: document.querySelector("#review-next"),
+  reviewContent: document.querySelector("#review-content"),
   reviewState: document.querySelector("#review-state"),
-  saveReview: document.querySelector("#save-review"),
-  exportButton: document.querySelector("#export-button"),
-  importButton: document.querySelector("#import-button"),
   searchTrigger: document.querySelector("#search-trigger"),
-  achievementsOpen: document.querySelector("#achievements-open"),
-  achievementsDialog: document.querySelector("#achievements-dialog"),
-  achievementsClose: document.querySelector("#achievements-close"),
-  achievementsRanges: [...document.querySelectorAll("[data-range]")],
-  achievementsFrom: document.querySelector("#achievements-from"),
-  achievementsTo: document.querySelector("#achievements-to"),
-  achievementsScope: document.querySelector("#achievements-scope"),
-  achievementsOutput: document.querySelector("#achievements-output"),
-  achievementsState: document.querySelector("#achievements-state"),
-  achievementsCopy: document.querySelector("#achievements-copy"),
-  achievementsDownload: document.querySelector("#achievements-download"),
-  achievementsGenerate: document.querySelector("#achievements-generate"),
-  searchShortcut: document.querySelector("#search-shortcut"),
+  searchShortcuts: [...document.querySelectorAll("[data-search-shortcut]")],
+  sidebarSearch: document.querySelector("#sidebar-search"),
+  navTodayCount: document.querySelector("#nav-today-count"),
+  navUpcomingCount: document.querySelector("#nav-upcoming-count"),
+  sidebarProjectList: document.querySelector("#sidebar-project-list"),
+  heatmapTitle: document.querySelector("#heatmap-title"),
+  heatmapGrid: document.querySelector("#heatmap-grid"),
+  heatmapLegend: document.querySelector("#heatmap-legend"),
+  heatmapPrevious: document.querySelector("#heatmap-previous"),
+  heatmapNext: document.querySelector("#heatmap-next"),
+  upcomingList: document.querySelector("#upcoming-list"),
+  planCard: document.querySelector("#plan-card"),
+  planList: document.querySelector("#plan-list"),
+  planAddAll: document.querySelector("#plan-add-all"),
+  planDismiss: document.querySelector("#plan-dismiss"),
+  goalCount: document.querySelector("#goal-count"),
+  goalsWeek: document.querySelector("#goals-week"),
+  goalList: document.querySelector("#goal-list"),
+  goalAddForm: document.querySelector("#goal-add-form"),
+  goalNewTitle: document.querySelector("#goal-new-title"),
+  captureGoal: document.querySelector("#capture-goal"),
+  summaryGoalsCard: document.querySelector("#summary-goals-card"),
+  summaryGoalList: document.querySelector("#summary-goal-list"),
+  summaryGoalsTotal: document.querySelector("#summary-goals-total"),
   searchDialog: document.querySelector("#search-dialog"),
   searchInput: document.querySelector("#search-input"),
   searchResults: document.querySelector("#search-results"),
@@ -134,7 +125,6 @@ const elements = {
   settingsImportButton: document.querySelector("#settings-import-button"),
   settingsTabs: [...document.querySelectorAll("[data-settings-tab]")],
   settingsPanels: [...document.querySelectorAll("[data-settings-panel]")],
-  taskSettingsMore: document.querySelector("#task-settings-more"),
   accountMenuButton: document.querySelector("#account-menu-button"),
   accountMenu: document.querySelector("#account-menu"),
   logoutButton: document.querySelector("#logout-button"),
@@ -151,6 +141,8 @@ const elements = {
   agentDigestGitEmails: document.querySelector("#agent-digest-git-emails"),
   agentDigestGitDirs: document.querySelector("#agent-digest-git-dirs"),
   captureMoreButton: document.querySelector("#capture-more-button"),
+  captureDueQuick: document.querySelector("#capture-due-quick"),
+  captureDueQuickButtons: [...document.querySelectorAll("#capture-due-quick [data-due-quick]")],
   captureMoreLabel: document.querySelector("#capture-more-label"),
   captureExtra: document.querySelector("#capture-extra"),
   captureDueDateField: document.querySelector("#capture-due-date-field"),
@@ -193,6 +185,10 @@ const elements = {
   summaryPrevious: document.querySelector("#summary-previous"),
   summaryNext: document.querySelector("#summary-next"),
   summaryCurrent: document.querySelector("#summary-current"),
+  summaryRangeControls: document.querySelector("#summary-range-controls"),
+  summaryRangePresets: [...document.querySelectorAll("[data-range]")],
+  summaryRangeFrom: document.querySelector("#summary-range-from"),
+  summaryRangeTo: document.querySelector("#summary-range-to"),
   summaryProjectFilter: document.querySelector("#summary-project-filter"),
   summaryProjectMenu: document.querySelector("#summary-project-menu"),
   summaryPeriodLabel: document.querySelector("#summary-period-label"),
@@ -220,9 +216,11 @@ const elements = {
   summaryExportItems: [...document.querySelectorAll("#summary-export-menu [role='menuitem']")],
   summaryOpenItems: document.querySelector("#summary-open-items"),
   summaryReviewTitle: document.querySelector("#summary-review-title"),
+  summaryReviewCopy: document.querySelector("#summary-review-copy"),
+  summaryReportLabel: document.querySelector("#summary-report-label"),
+  downloadSummaryReport: document.querySelector("#download-summary-report"),
   summaryBlockers: document.querySelector("#summary-blockers"),
   summaryReviewState: document.querySelector("#summary-review-state"),
-  saveSummaryReview: document.querySelector("#save-summary-review"),
   generateAiSummary: document.querySelector("#generate-ai-summary"),
   copySummaryReport: document.querySelector("#copy-summary-report"),
   summaryAiReport: document.querySelector("#summary-ai-report"),
@@ -265,12 +263,9 @@ const defaultState = {
   tasks: [],
   recurrences: [],
   logs: [],
-  notes: {},
+  goals: [],
   reviews: {},
   periodReviews: {},
-  projectPeriodReviews: {},
-  periodReports: {},
-  projectPeriodReports: {},
 };
 
 let state = structuredClone(defaultState);
@@ -281,7 +276,9 @@ let selectedDate = toDateKey(new Date());
 let summaryPeriod = "week";
 let summaryAnchor = new Date();
 let summaryProject = "";
+let summaryRange = null;
 let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let heatmapCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let captureType = "task";
 let capturePolishLoading = false;
 let capturePolishRequestVersion = 0;
@@ -291,7 +288,6 @@ let deferredSave = null;
 let saveStateTimer;
 let toastTimer;
 let summarySaveVersion = 0;
-let summaryAiReportSaveVersion = 0;
 let summaryAchievementPage = 0;
 let aiSummaryLoading = false;
 let aiProviders = [];
@@ -630,7 +626,13 @@ function normalizeTask(task) {
     dueTime: task.dueTime ?? null,
     remindMinutes: task.remindMinutes ?? null,
     recurrenceId: task.recurrenceId ?? null,
+    focus: Boolean(task.focus),
+    goalId: task.goalId ?? null,
   };
+}
+
+function normalizeGoal(goal) {
+  return { id: goal.id, week: goal.week, title: goal.title, done: Boolean(goal.done), createdAt: goal.createdAt };
 }
 
 function normalizeRecurrence(recurrence) {
@@ -664,16 +666,11 @@ function normalizeLog(log) {
 }
 
 function normalizeReview(review) {
-  return {
-    wins: review?.wins ?? "",
-    blockers: review?.blockers ?? "",
-    next: review?.next ?? "",
-    completedAt: review?.completedAt ?? null,
-  };
+  return { content: review?.content ?? "" };
 }
 
-function normalizeReport(report) {
-  return { content: report?.content ?? "" };
+function normalizePeriodRecord(record) {
+  return { report: record?.report ?? "", notes: record?.notes ?? "" };
 }
 
 function diffEntries(base, next, normalize, kind, field) {
@@ -724,27 +721,21 @@ function diffState(base, next) {
   const tasks = diffEntries(base.tasks, next.tasks, normalizeTask, "task", "task");
   const recurrences = diffEntries(base.recurrences ?? [], next.recurrences ?? [], normalizeRecurrence, "recurrence", "recurrence");
   const logs = diffEntries(base.logs, next.logs, normalizeLog, "log", "log");
+  const goals = diffEntries(base.goals ?? [], next.goals ?? [], normalizeGoal, "goal", "goal");
   return [
     ...recurrences.puts,
     ...recurrences.deletes,
+    // Deletes first so a week that swaps one goal for another never briefly holds more than the limit.
+    ...goals.deletes,
+    ...goals.puts,
     ...tasks.puts,
     ...logs.puts,
     ...logs.deletes,
     ...tasks.deletes,
-    ...diffMap(base.notes, next.notes, (content) => content ?? "",
-      (date, content) => ({ op: "note.put", date, content }),
-      (date) => ({ op: "note.delete", date })),
     ...diffMap(base.reviews, next.reviews, normalizeReview,
       (date, review) => ({ op: "review.put", date, review }),
       (date) => ({ op: "review.delete", date })),
-    ...diffMap(base.periodReviews, next.periodReviews, normalizeReview,
-      (key, review) => ({ op: "periodReview.put", key, review }),
-      (key) => ({ op: "periodReview.delete", key })),
-    ...diffMap(base.periodReports, next.periodReports, normalizeReport,
-      (key, report) => ({ op: "periodReport.put", key, report }),
-      (key) => ({ op: "periodReport.delete", key })),
-    ...diffProjectMap(base.projectPeriodReviews, next.projectPeriodReviews, normalizeReview, "projectPeriodReview", "key", "review"),
-    ...diffProjectMap(base.projectPeriodReports, next.projectPeriodReports, normalizeReport, "projectPeriodReport", "key", "report"),
+    ...diffProjectMap(base.periodReviews, next.periodReviews, normalizePeriodRecord, "periodReview", "key", "review"),
   ];
 }
 
@@ -770,18 +761,12 @@ function applyOps(data, ops) {
       case "recurrence.delete": data.recurrences = data.recurrences.filter((recurrence) => recurrence.id !== op.id); break;
       case "log.put": putEntry(data.logs, op.log); break;
       case "log.delete": data.logs = data.logs.filter((log) => log.id !== op.id); break;
-      case "note.put": data.notes[op.date] = op.content; break;
-      case "note.delete": delete data.notes[op.date]; break;
+      case "goal.put": putEntry(data.goals, op.goal); break;
+      case "goal.delete": data.goals = data.goals.filter((goal) => goal.id !== op.id); break;
       case "review.put": data.reviews[op.date] = op.review; break;
       case "review.delete": delete data.reviews[op.date]; break;
-      case "periodReview.put": data.periodReviews[op.key] = op.review; break;
-      case "periodReview.delete": delete data.periodReviews[op.key]; break;
-      case "periodReport.put": data.periodReports[op.key] = op.report; break;
-      case "periodReport.delete": delete data.periodReports[op.key]; break;
-      case "projectPeriodReview.put": putProjectValue("projectPeriodReviews", op.key, op.project, op.review); break;
-      case "projectPeriodReview.delete": deleteProjectValue("projectPeriodReviews", op.key, op.project); break;
-      case "projectPeriodReport.put": putProjectValue("projectPeriodReports", op.key, op.project, op.report); break;
-      case "projectPeriodReport.delete": deleteProjectValue("projectPeriodReports", op.key, op.project); break;
+      case "periodReview.put": putProjectValue("periodReviews", op.key, op.project, op.review); break;
+      case "periodReview.delete": deleteProjectValue("periodReviews", op.key, op.project); break;
       default: break;
     }
   }
@@ -792,6 +777,7 @@ function applyOps(data, ops) {
 
 function adoptServerState(result) {
   result.data.recurrences ??= [];
+  result.data.goals ??= [];
   state = result.data;
   syncedState = structuredClone(result.data);
   revision = result.revision;
@@ -870,6 +856,7 @@ async function mergeServerState({ message = "已同步其他页面的更新" } =
     return;
   }
   result.data.recurrences ??= [];
+  result.data.goals ??= [];
   if (result.taskSettings) taskSettings = result.taskSettings;
   const pending = diffState(syncedState, state);
   syncedState = structuredClone(result.data);
@@ -917,6 +904,7 @@ async function bootstrap() {
     }
     setSaveIndicator("已连接 SQLite");
     render();
+    if (window.location.hash) scrollToRouteSection("instant");
     checkTaskReminders();
   } catch (error) {
     setSaveIndicator("数据库连接失败", true);
@@ -946,7 +934,7 @@ function resolveRoute(pathname) {
   return ROUTES[normalizePath(pathname)] ?? ROUTES["/"];
 }
 
-const SETTINGS_TABS = ["general", "ai", "agent", "connect"];
+const SETTINGS_TABS = ["general", "data", "ai", "agent", "connect"];
 
 function currentSettingsTab() {
   const tab = window.location.hash.slice(1);
@@ -1035,10 +1023,12 @@ function render() {
   renderDate();
   renderTasks();
   renderTimeline();
-  renderNotes();
   renderReview();
-  renderOverview();
   renderProgress();
+  renderPlan();
+  renderGoals();
+  renderUpcoming();
+  renderSidebar();
   renderSummary();
   renderAiSettings();
 }
@@ -1135,15 +1125,11 @@ function renderRoute() {
   const settingsActive = currentRoute.key === "ai-settings";
   if (settingsActive) {
     renderSettingsTabs();
-    renderTaskSettings();
     renderProjectManager();
   }
   elements.settingsLink.classList.toggle("active", settingsActive);
   if (settingsActive) elements.settingsLink.setAttribute("aria-current", "page");
   else elements.settingsLink.removeAttribute("aria-current");
-
-  if (currentRoute.key === "tasks" && captureType !== "task") setCaptureType("task", { focus: false });
-  if (currentRoute.key === "timeline" && captureType !== "log") setCaptureType("log", { focus: false });
 }
 
 function renderDate() {
@@ -1260,84 +1246,13 @@ function focusCalendarDate(dateKey) {
 function tasksForDate(date = selectedDate) {
   return state.tasks
     .filter((task) => task.date === date)
-    .sort((a, b) => Number(a.completed) - Number(b.completed) || dueRank(a) - dueRank(b) || priorityWeight(b.priority) - priorityWeight(a.priority) || a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => Number(a.completed) - Number(b.completed) || Number(b.focus) - Number(a.focus) || dueRank(a) - dueRank(b) || priorityWeight(b.priority) - priorityWeight(a.priority) || a.createdAt.localeCompare(b.createdAt));
 }
 
 function logsForDate(date = selectedDate) {
   return state.logs
     .filter((log) => log.date === date)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
-function renderOverview() {
-  const today = currentDateKey();
-  // On today's overview, open tasks planned for other days that are due soon are surfaced too.
-  const upcoming = selectedDate === today
-    ? state.tasks.filter((task) => !task.completed && task.date !== selectedDate && task.dueDate && daysBetweenKeys(today, task.dueDate) <= DUE_SOON_DAYS)
-    : [];
-  const openTasks = [...tasksForDate().filter((task) => !task.completed), ...upcoming]
-    .sort((a, b) => dueRank(a) - dueRank(b));
-  const recentLogs = logsForDate();
-  elements.overviewTaskCount.textContent = String(openTasks.length);
-  elements.overviewLogCount.textContent = String(recentLogs.length);
-
-  if (openTasks.length) {
-    elements.overviewTaskList.innerHTML = openTasks.slice(0, 3).map((task) => {
-      const priorityLabel = task.priority === "high" ? "重要" : task.priority === "low" ? "稍后" : "普通";
-      const priority = task.priority !== "normal"
-        ? `<span class="overview-chip ${escapeAttribute(task.priority)}">${priorityLabel}</span>`
-        : "";
-      const project = task.project ? `<span class="overview-chip project">${escapeHtml(task.project)}</span>` : "";
-      return `<article class="overview-item">
-        <span class="overview-item-marker task" aria-hidden="true"></span>
-        <div><strong title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</strong><p>${renderTaskScheduleChips(task, "overview-chip")}${project}${priority}<time>${formatTime(task.createdAt)}</time></p></div>
-      </article>`;
-    }).join("");
-  } else {
-    elements.overviewTaskList.innerHTML = '<div class="overview-empty"><strong>暂无待办</strong><p>今天没有待推进的事项，可以放心专注。</p></div>';
-  }
-
-  if (recentLogs.length) {
-    elements.overviewLogList.innerHTML = recentLogs.slice(0, 3).map((log) => {
-      const meta = `${logOriginLabel(log)}${log.project ? ` · ${escapeHtml(log.project)}` : ""}`;
-      return `<article class="overview-item">
-        <time class="overview-item-time">${formatTime(log.createdAt)}</time>
-        <span class="overview-item-marker log" aria-hidden="true"></span>
-        <div><strong title="${escapeAttribute(log.title)}">${escapeHtml(log.title)}</strong><p>${meta}</p></div>
-      </article>`;
-    }).join("");
-  } else {
-    elements.overviewLogList.innerHTML = '<div class="overview-empty"><strong>还没有动态</strong><p>完成待办或记录进展后，最新内容会出现在这里。</p></div>';
-  }
-
-  const review = readDailyReview() ?? {};
-  const hasDraft = [review.blockers, review.next].some((value) => value?.trim());
-  const reviewState = review.completedAt ? "completed" : hasDraft ? "active" : "pending";
-  const reviewContent = {
-    pending: {
-      status: "待复盘",
-      title: "用三分钟收好今天",
-      copy: "记下今天的问题和明天的重点。",
-      action: "开始复盘",
-    },
-    active: {
-      status: "进行中",
-      title: "复盘草稿等待完成",
-      copy: "已经有了开头，再补充一点就能收好今天。",
-      action: "继续复盘",
-    },
-    completed: {
-      status: "已完成",
-      title: "今天已经好好收尾",
-      copy: review.completedAt ? `复盘完成于 ${formatTime(review.completedAt)}，随时可以回来更新。` : "",
-      action: "查看复盘",
-    },
-  }[reviewState];
-  elements.overviewReviewStatus.dataset.status = reviewState;
-  elements.overviewReviewStatus.textContent = reviewContent.status;
-  elements.overviewReviewTitle.textContent = reviewContent.title;
-  elements.overviewReviewCopy.textContent = reviewContent.copy;
-  elements.overviewReviewLink.childNodes[0].textContent = `${reviewContent.action} `;
 }
 
 function renderItemActions(entry, host) {
@@ -1425,9 +1340,12 @@ function renderEntryEditSchedule() {
   const remindOptions = [["", "不提醒"], ...Object.entries(REMIND_LABELS).map(([value, label]) => [value, label.replace("提醒", "") || label])];
   return `
     <div class="entry-edit-schedule">
-      <label class="capture-extra-field"><span>截止日期</span><input type="date" data-edit-field="dueDate" value="${escapeAttribute(dueDate)}" /></label>
+      <div class="capture-extra-field"><span>截止日期</span><input type="date" data-edit-field="dueDate" value="${escapeAttribute(dueDate)}" aria-label="截止日期" />
+        <div class="due-quick" role="group" aria-label="快捷截止">${["day", "week"].map((kind) => `<button class="due-quick-button" type="button" data-edit-due="${kind}" aria-pressed="${dueDate === quickDueDate(kind, entryEdit.draft.date)}" title="${escapeAttribute(quickDueLabel(kind, entryEdit.draft.date))}">${kind === "day" ? "今日" : "本周"}</button>`).join("")}</div>
+      </div>
       <label class="capture-extra-field"><span>截止时间</span><input type="time" data-edit-field="dueTime" value="${escapeAttribute(dueTime)}" /></label>
       <label class="capture-extra-field"><span>提醒</span><select data-edit-field="remindMinutes">${remindOptions.map(([value, label]) => `<option value="${value}"${value === remindMinutes ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
+      <label class="capture-extra-field"><span>关联目标</span><select data-edit-field="goalId">${goalOptionsHtml(entryEdit.draft.date, entryEdit.draft.goalId)}</select></label>
     </div>`;
 }
 
@@ -1453,6 +1371,8 @@ function startEntryEdit(kind, id, host, hostId) {
       dueDate: entry.dueDate ?? "",
       dueTime: entry.dueTime ?? "",
       remindMinutes: entry.remindMinutes === null || entry.remindMinutes === undefined ? "" : String(entry.remindMinutes),
+      goalId: entry.goalId ?? "",
+      date: entry.date,
     } : {}),
   };
   entryEdit = {
@@ -1596,7 +1516,6 @@ function saveEntryEdit() {
     showToast("设置提醒前，先选择截止日期或时间");
     return;
   }
-  const previousDraft = makeDailyReviewDraft(entry.date);
   entry.title = title;
   entry.project = entryEdit.draft.project;
   if (entryEdit.kind === "log") entry.source = "";
@@ -1608,6 +1527,7 @@ function saveEntryEdit() {
     entry.remindMinutes = remindMinutes === "" ? null : Number(remindMinutes);
     if (entry.remindMinutes !== null) requestNotificationPermission();
     entry.priority = entryEdit.draft.priority;
+    entry.goalId = entryEdit.draft.goalId || null;
     state.logs
       .filter((log) => log.sourceTaskId === entry.id)
       .forEach((log) => {
@@ -1617,7 +1537,6 @@ function saveEntryEdit() {
   }
   const editedKind = entryEdit.kind;
   entryEdit = null;
-  reconcileDailyReview(entry.date, previousDraft);
   persist();
   render();
   showToast(editedKind === "task" ? "待办已更新" : "工作记录已更新");
@@ -1649,7 +1568,7 @@ function renderTasks() {
   filteredTasks.forEach((task) => {
     const item = document.createElement("article");
     const editing = entryEditMatches("task", task.id);
-    item.className = `task-item${task.completed ? " completed" : ""}${editing ? " editing" : ""}`;
+    item.className = `task-item${task.completed ? " completed" : ""}${editing ? " editing" : ""}${task.focus ? " is-focus" : ""}`;
     item.dataset.id = task.id;
     const priorityLabel = task.priority === "high" ? "重要" : task.priority === "low" ? "稍后" : "普通";
     const project = task.project ? `<span class="project-chip"># ${escapeHtml(task.project)}</span>` : "";
@@ -1664,8 +1583,11 @@ function renderTasks() {
       </button>
       <div class="task-body">
         <p class="task-title" title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</p>
-        <div class="task-meta">${renderTaskScheduleChips(task)}${project}${priority}<span>${formatTime(task.createdAt)}</span></div>
+        <div class="task-meta">${renderTaskScheduleChips(task)}${renderGoalChip(task)}${project}${priority}<span>${formatTime(task.createdAt)}</span></div>
       </div>
+      <button class="focus-toggle" type="button" aria-pressed="${task.focus}" aria-label="${task.focus ? "取消重点" : "设为今日重点"}：${escapeAttribute(task.title)}" title="${task.focus ? "取消重点" : "设为今日重点（每天最多 3 件）"}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9L12 3.5Z"/></svg>
+      </button>
       ${renderItemActions(task, "task")}`;
     fragment.append(item);
   });
@@ -1760,7 +1682,7 @@ async function prepareTasksForToday({ initial = false } = {}) {
   let result;
   try {
     if (!initial) await waitForPendingSaves();
-    result = await requestJson("/api/tasks/daily", { method: "POST", body: JSON.stringify({ date }) });
+    result = await requestJson("/api/tasks/daily", { method: "POST", body: JSON.stringify({ date, timeZone: browserTimeZone() }) });
   } catch {
     preparedTaskDate = previous;
     return;
@@ -1827,7 +1749,7 @@ function checkTaskReminders() {
         notification.addEventListener("click", () => {
           window.focus();
           selectedDate = task.date;
-          navigateTo("/tasks");
+          navigateTo("/#tasks");
         });
       } catch {}
     }
@@ -1860,8 +1782,33 @@ function setCaptureExtraOpen(open) {
   elements.captureMoreButton.classList.toggle("active", open);
 }
 
+// "This week" ends on Friday for a workday; picked on a weekend it means that Sunday.
+function quickDueDate(kind, baseKey) {
+  if (kind === "day") return baseKey;
+  const base = fromDateKey(baseKey);
+  const weekday = (base.getDay() + 6) % 7;
+  return shiftDateKeyBy(baseKey, weekday <= 4 ? 4 - weekday : 6 - weekday);
+}
+
+function quickDueLabel(kind, baseKey) {
+  const date = quickDueDate(kind, baseKey);
+  return `${kind === "day" ? "今日截止" : "本周截止"}（${shortDateLabel(date)} ${new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(fromDateKey(date))}）`;
+}
+
+function setCaptureQuickDue(kind) {
+  const date = quickDueDate(kind, selectedDate);
+  elements.captureRepeat.value = "";
+  elements.captureDueDate.value = elements.captureDueDate.value === date ? "" : date;
+  syncCaptureExtra();
+}
+
 function syncCaptureExtra() {
   const repeat = elements.captureRepeat.value;
+  elements.captureDueQuickButtons.forEach((button) => {
+    const kind = button.dataset.dueQuick;
+    button.setAttribute("aria-pressed", String(!repeat && elements.captureDueDate.value === quickDueDate(kind, selectedDate)));
+    button.title = quickDueLabel(kind, selectedDate);
+  });
   elements.captureDueDateField.hidden = Boolean(repeat);
   elements.captureDueTimeLabel.textContent = repeat ? "每次的时间" : "截止时间";
   const parts = [];
@@ -1926,7 +1873,7 @@ function renderTaskSettings() {
         </div>
       </div>`;
     }).join("")
-    : '<div class="summary-empty">还没有重复待办。添加待办时，在“截止 / 重复”里选择重复方式即可创建。</div>';
+    : '<div class="summary-empty">还没有重复待办。</div>';
 }
 
 function openTaskSettings() {
@@ -1973,6 +1920,313 @@ function deleteRecurrence(id) {
   showToast("重复待办已删除");
 }
 
+function shiftDateKeyBy(key, days) {
+  const date = fromDateKey(key);
+  date.setDate(date.getDate() + days);
+  return toDateKey(date);
+}
+
+function weekKeyOf(dateKey) {
+  return toDateKey(startOfPeriod("week", fromDateKey(dateKey)));
+}
+
+function goalsForWeek(week) {
+  return (state.goals ?? []).filter((goal) => goal.week === week).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function goalProgress(goal) {
+  const linked = state.tasks.filter((task) => task.goalId === goal.id);
+  return { completed: linked.filter((task) => task.completed).length, total: linked.length };
+}
+
+function renderGoalChip(task) {
+  const goal = task.goalId ? state.goals.find((entry) => entry.id === task.goalId) : null;
+  return goal ? `<span class="goal-chip" title="本周目标：${escapeAttribute(goal.title)}">◎ ${escapeHtml(goal.title)}</span>` : "";
+}
+
+// Options for linking a task to a goal of its week; a link to a goal of another week is kept selectable.
+function goalOptionsHtml(dateKey, selectedId = "") {
+  const goals = goalsForWeek(weekKeyOf(dateKey));
+  const linked = selectedId && !goals.some((goal) => goal.id === selectedId) ? state.goals.find((goal) => goal.id === selectedId) : null;
+  const options = [...(linked ? [linked] : []), ...goals];
+  return [
+    `<option value="">${goals.length || linked ? "不关联" : "这周还没有目标"}</option>`,
+    ...options.map((goal) => `<option value="${escapeAttribute(goal.id)}"${goal.id === selectedId ? " selected" : ""}>${escapeHtml(goal.title)}</option>`),
+  ].join("");
+}
+
+const MAX_FOCUS_PER_DAY = 3;
+const MAX_GOALS_PER_WEEK = 5;
+const PLAN_DISMISS_STORAGE_KEY = "mydays.planDismissed";
+
+function toggleFocus(id) {
+  const task = state.tasks.find((entry) => entry.id === id);
+  if (!task) return;
+  if (!task.focus && state.tasks.filter((entry) => entry.date === task.date && entry.focus).length >= MAX_FOCUS_PER_DAY) {
+    showToast(`每天最多 ${MAX_FOCUS_PER_DAY} 件重点，先取消一件再选`);
+    return;
+  }
+  task.focus = !task.focus;
+  persist();
+  render();
+}
+
+function moveTaskToDate(task, date) {
+  if (task.date < date && !task.originDate) task.originDate = task.date;
+  task.date = date;
+  // Focus is chosen per day, so it does not travel with the task.
+  task.focus = false;
+}
+
+function planCandidates() {
+  const today = currentDateKey();
+  const soon = shiftDateKeyBy(today, DUE_SOON_DAYS);
+  return state.tasks
+    .filter((task) => !task.completed && task.date !== today && !(task.recurrenceId && task.date < today)
+      && (task.date < today || (task.dueDate && task.dueDate <= soon)))
+    .sort((a, b) => dueRank(a) - dueRank(b) || a.date.localeCompare(b.date));
+}
+
+function readPlanDismissed() {
+  try {
+    return window.localStorage.getItem(PLAN_DISMISS_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function renderPlan() {
+  const today = currentDateKey();
+  const candidates = currentRoute.key === "today" && selectedDate === today && readPlanDismissed() !== today ? planCandidates() : [];
+  elements.planCard.hidden = !candidates.length;
+  if (!candidates.length) return;
+  elements.planList.innerHTML = candidates.slice(0, 8).map((task) => {
+    const origin = task.date < today ? `原定 ${shortDateLabel(task.date)}` : `计划在 ${shortDateLabel(task.date)}`;
+    return `<div class="plan-item" data-id="${escapeAttribute(task.id)}">
+      <div><strong title="${escapeAttribute(task.title)}">${escapeHtml(task.title)}</strong>
+        <p>${renderTaskScheduleChips(task)}${task.project ? `<span class="project-chip"># ${escapeHtml(task.project)}</span>` : ""}<span>${origin}</span></p></div>
+      <button class="soft-button" type="button" data-plan-add>加入今天</button>
+    </div>`;
+  }).join("") + (candidates.length > 8 ? `<p class="plan-more">还有 ${candidates.length - 8} 项，可在「即将到期」里查看。</p>` : "");
+}
+
+function addPlannedTasks(ids) {
+  const today = currentDateKey();
+  const tasks = state.tasks.filter((task) => ids.includes(task.id));
+  tasks.forEach((task) => moveTaskToDate(task, today));
+  if (!tasks.length) return;
+  persist();
+  render();
+  showToast(tasks.length === 1 ? `已加入今天：${tasks[0].title}` : `已把 ${tasks.length} 项加入今天`);
+}
+
+function renderGoals() {
+  const week = weekKeyOf(selectedDate);
+  const goals = goalsForWeek(week);
+  const end = shiftDateKeyBy(week, 6);
+  elements.goalsWeek.textContent = `${shortDateLabel(week)} – ${shortDateLabel(end)}`;
+  elements.goalCount.textContent = `${goals.filter((goal) => goal.done).length}/${goals.length}`;
+  elements.goalAddForm.hidden = goals.length >= MAX_GOALS_PER_WEEK;
+  elements.goalList.innerHTML = goals.length
+    ? goals.map((goal) => {
+      const { completed, total } = goalProgress(goal);
+      const ratio = goal.done ? 100 : total ? Math.round((completed / total) * 100) : 0;
+      return `<div class="goal-row${goal.done ? " done" : ""}" data-goal-id="${escapeAttribute(goal.id)}">
+        <button class="goal-check" type="button" data-goal-toggle aria-pressed="${goal.done}" aria-label="${goal.done ? "恢复" : "完成"}目标：${escapeAttribute(goal.title)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8"/></svg>
+        </button>
+        <div class="goal-body">
+          <p title="${escapeAttribute(goal.title)}">${escapeHtml(goal.title)}</p>
+          <div class="goal-progress" aria-hidden="true"><i style="width:${ratio}%"></i></div>
+          <small>${total ? `关联待办 ${completed}/${total}` : "添加待办时可在「截止 / 重复」里关联这个目标"}</small>
+        </div>
+        <button class="item-action danger" type="button" data-goal-delete aria-label="删除目标：${escapeAttribute(goal.title)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 7l1 13h6l1-13M10 11v5M14 11v5"/></svg>
+        </button>
+      </div>`;
+    }).join("")
+    : '<p class="goals-empty">给这周定 1 到 3 个想达成的结果，待办可以挂到目标下，周报会对照目标写进展。</p>';
+  const selected = elements.captureGoal.value;
+  elements.captureGoal.innerHTML = goalOptionsHtml(selectedDate, selected);
+}
+
+function addGoal(event) {
+  event.preventDefault();
+  const title = elements.goalNewTitle.value.replace(/\s+/g, " ").trim();
+  if (!title) return;
+  const week = weekKeyOf(selectedDate);
+  if (goalsForWeek(week).length >= MAX_GOALS_PER_WEEK) {
+    showToast(`每周最多 ${MAX_GOALS_PER_WEEK} 个目标`);
+    return;
+  }
+  state.goals.push({ id: makeId(), week, title, done: false, createdAt: new Date().toISOString() });
+  elements.goalNewTitle.value = "";
+  persist();
+  render();
+}
+
+function toggleGoal(id) {
+  const goal = state.goals.find((entry) => entry.id === id);
+  if (!goal) return;
+  goal.done = !goal.done;
+  persist();
+  render();
+  if (goal.done) showToast(`目标达成：${goal.title}`);
+}
+
+function deleteGoal(id) {
+  const goal = state.goals.find((entry) => entry.id === id);
+  if (!goal || !window.confirm(`删除目标“${goal.title}”？关联的待办会保留，只是不再挂在这个目标下。`)) return;
+  state.goals = state.goals.filter((entry) => entry.id !== id);
+  state.tasks.filter((task) => task.goalId === id).forEach((task) => { task.goalId = null; });
+  persist();
+  render();
+}
+
+const UPCOMING_DAYS = 14;
+
+// Open tasks placed by deadline: overdue, then each day of the next two weeks, then later. A task sits on its
+// due date when it has one, otherwise on its planned date; plain tasks for today stay on the today page.
+function upcomingEntries() {
+  const today = currentDateKey();
+  const horizon = shiftDateKeyBy(today, UPCOMING_DAYS);
+  return state.tasks
+    .filter((task) => !task.completed && !(task.recurrenceId && task.date < today))
+    .flatMap((task) => {
+      if (task.dueDate && task.dueDate < today) return [{ task, key: task.dueDate, group: "overdue" }];
+      const key = task.dueDate ?? task.date;
+      if (key < today || (key === today && !task.dueDate)) return [];
+      return [{ task, key, group: key > horizon ? "later" : key }];
+    })
+    .sort((a, b) => a.key.localeCompare(b.key) || priorityWeight(b.task.priority) - priorityWeight(a.task.priority));
+}
+
+function upcomingGroupLabel(group) {
+  if (group === "overdue") return "已逾期";
+  if (group === "later") return "两周以后";
+  const today = currentDateKey();
+  const days = daysBetweenKeys(today, group);
+  const weekday = new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(fromDateKey(group));
+  const relative = days === 0 ? "今天" : days === 1 ? "明天" : days === 2 ? "后天" : `${days} 天后`;
+  return `${relative} · ${shortDateLabel(group)} ${weekday}`;
+}
+
+function renderUpcoming() {
+  if (currentRoute.key !== "upcoming") return;
+  const entries = upcomingEntries();
+  if (!entries.length) {
+    elements.upcomingList.innerHTML = '<div class="panel upcoming-empty"><strong>接下来两周没有要到期的待办</strong><p>给待办设置截止日期，或者在之后的日期里添加待办，它们会出现在这里。</p></div>';
+    return;
+  }
+  const today = currentDateKey();
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!groups.has(entry.group)) groups.set(entry.group, []);
+    groups.get(entry.group).push(entry.task);
+  }
+  elements.upcomingList.innerHTML = [...groups].map(([group, tasks]) => `
+    <section class="panel upcoming-group${group === "overdue" ? " overdue" : ""}">
+      <h2>${escapeHtml(upcomingGroupLabel(group))} <span class="count-badge">${tasks.length}</span></h2>
+      ${tasks.map((task) => `
+        <div class="upcoming-item" data-id="${escapeAttribute(task.id)}">
+          <button class="task-check" type="button" data-upcoming-complete aria-label="完成待办：${escapeAttribute(task.title)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8"/></svg>
+          </button>
+          <div class="upcoming-body">
+            <button class="upcoming-title" type="button" data-upcoming-open title="查看 ${escapeAttribute(task.date)} 的待办">${escapeHtml(task.title)}</button>
+            <div class="task-meta">${renderTaskScheduleChips(task)}${renderGoalChip(task)}${task.project ? `<span class="project-chip"># ${escapeHtml(task.project)}</span>` : ""}<span>${task.date === today ? "已在今天" : `计划于 ${shortDateLabel(task.date)}`}</span></div>
+          </div>
+          ${task.date === today ? "" : '<button class="soft-button" type="button" data-upcoming-today>移到今天</button>'}
+        </div>`).join("")}
+    </section>`).join("");
+}
+
+function renderSidebar() {
+  const today = currentDateKey();
+  const openToday = state.tasks.filter((task) => task.date === today && !task.completed).length;
+  elements.navTodayCount.textContent = openToday ? String(openToday) : "";
+  const weekAhead = shiftDateKeyBy(today, 7);
+  const pressing = upcomingEntries().filter((entry) => entry.group === "overdue" || entry.key <= weekAhead).length;
+  elements.navUpcomingCount.textContent = pressing ? String(pressing) : "";
+  elements.navUpcomingCount.classList.toggle("alert", upcomingEntries().some((entry) => entry.group === "overdue"));
+  renderSidebarProjects();
+  renderHeatmap();
+}
+
+function renderSidebarProjects() {
+  const openCounts = new Map();
+  for (const task of state.tasks) {
+    if (!task.completed && task.project) openCounts.set(task.project, (openCounts.get(task.project) ?? 0) + 1);
+  }
+  const names = [...new Set([...projectOptions, ...openCounts.keys()])];
+  elements.sidebarProjectList.innerHTML = names.length
+    ? names.map((name, index) => {
+      const active = currentRoute.key === "summary" && summaryProject === name;
+      const count = openCounts.get(name) ?? 0;
+      return `<a class="sidebar-project${active ? " active" : ""}" href="/summary" data-project="${escapeAttribute(name)}"${active ? ' aria-current="page"' : ""} title="在周期汇总中查看「${escapeAttribute(name)}」">
+        <i class="project-color color-${index % 4}" aria-hidden="true"></i><span>${escapeHtml(name)}</span><span class="nav-count" aria-label="${count} 项未完成">${count || ""}</span>
+      </a>`;
+    }).join("")
+    : '<p class="sidebar-empty">还没有项目</p>';
+}
+
+function activityCountsByDate() {
+  const counts = new Map();
+  const add = (date) => counts.set(date, (counts.get(date) ?? 0) + 1);
+  state.tasks.forEach((task) => { if (task.completed) add(task.date); });
+  state.logs.forEach((log) => { if (!log.sourceTaskId) add(log.date); });
+  return counts;
+}
+
+function heatLevel(count) {
+  return count === 0 ? 0 : count <= 2 ? 1 : count <= 4 ? 2 : count <= 7 ? 3 : 4;
+}
+
+function renderHeatmap() {
+  const year = heatmapCursor.getFullYear();
+  const month = heatmapCursor.getMonth();
+  const counts = activityCountsByDate();
+  const today = currentDateKey();
+  const offset = (new Date(year, month, 1).getDay() + 6) % 7;
+  const days = new Date(year, month + 1, 0).getDate();
+  let activeDays = 0;
+  let total = 0;
+  const cells = Array.from({ length: offset }, () => '<span class="heatmap-cell blank" aria-hidden="true"></span>');
+  for (let day = 1; day <= days; day += 1) {
+    const key = toDateKey(new Date(year, month, day));
+    const count = counts.get(key) ?? 0;
+    if (count) {
+      activeDays += 1;
+      total += count;
+    }
+    const classes = [`heatmap-cell level-${heatLevel(count)}`, key === today ? "today" : "", key === selectedDate ? "selected" : "", key > today ? "future" : ""].filter(Boolean).join(" ");
+    cells.push(`<button class="${classes}" type="button" data-date="${key}" aria-label="${month + 1}月${day}日：${count ? `${count} 条记录` : "没有记录"}" title="${month + 1}月${day}日 · ${count} 条">${day}</button>`);
+  }
+  elements.heatmapGrid.innerHTML = cells.join("");
+  elements.heatmapTitle.textContent = `${year} 年 ${month + 1} 月`;
+  elements.heatmapLegend.textContent = activeDays ? `${activeDays} 天有记录 · 共 ${total} 条` : "这个月还没有记录";
+  const currentMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  elements.heatmapNext.disabled = heatmapCursor >= currentMonth;
+}
+
+function goToDate(dateKey) {
+  selectedDate = dateKey;
+  const selected = fromDateKey(dateKey);
+  calendarCursor = new Date(selected.getFullYear(), selected.getMonth(), 1);
+  clearCapturePolish();
+  if (currentRoute.key === "today") render();
+  else navigateTo("/");
+}
+
+// Picks up writes made elsewhere (quick capture, the digest, another device) without reloading everything.
+async function syncIfServerChanged() {
+  if (document.visibilityState !== "visible" || deferredSave) return;
+  try {
+    const { revision: latest } = await requestJson("/api/revision");
+    if (latest !== revision) await mergeServerState({ message: "已同步新的记录" });
+  } catch {}
+}
+
 function renderTimeline() {
   const logs = logsForDate();
 
@@ -2002,12 +2256,6 @@ function renderTimeline() {
   elements.timelineList.append(fragment);
 }
 
-function renderNotes() {
-  const note = state.notes[selectedDate] ?? "";
-  if (elements.dailyNote.value !== note) elements.dailyNote.value = note;
-  elements.noteCount.textContent = `${note.length} / 2000`;
-}
-
 function setFieldValue(field, value) {
   if (field.value !== value) field.value = value;
 }
@@ -2029,67 +2277,43 @@ function writeDailyReview(date, review) {
   state.reviews[date] = review;
 }
 
-function readPeriodReview(context, project = summaryProject) {
-  const key = `${summaryPeriod}:${context.startKey}`;
-  return project ? state.projectPeriodReviews?.[key]?.[project] : state.periodReviews[key];
+function readPeriodRecord(context, project = summaryProject) {
+  return state.periodReviews[context.key]?.[project];
 }
 
-function writePeriodReview(context, project, review) {
-  const key = `${summaryPeriod}:${context.startKey}`;
-  if (!project) {
-    state.periodReviews[key] = review;
+function writePeriodRecord(context, project, changes) {
+  const record = { ...normalizePeriodRecord(readPeriodRecord(context, project)), ...changes };
+  if (!record.report.trim() && !record.notes.trim()) {
+    if (state.periodReviews[context.key]) delete state.periodReviews[context.key][project];
     return;
   }
-  state.projectPeriodReviews ??= {};
-  if (!Object.hasOwn(state.projectPeriodReviews, key)) {
-    setOwnValue(state.projectPeriodReviews, key, Object.create(null));
+  if (!Object.hasOwn(state.periodReviews, context.key)) {
+    setOwnValue(state.periodReviews, context.key, Object.create(null));
   }
-  setOwnValue(state.projectPeriodReviews[key], project, review);
-}
-
-function readPeriodReport(context, project = summaryProject) {
-  const key = `${summaryPeriod}:${context.startKey}`;
-  return project ? state.projectPeriodReports?.[key]?.[project] : state.periodReports[key];
-}
-
-function writePeriodReport(context, project, report) {
-  const key = `${summaryPeriod}:${context.startKey}`;
-  if (!project) {
-    state.periodReports[key] = report;
-    return;
-  }
-  state.projectPeriodReports ??= {};
-  if (!Object.hasOwn(state.projectPeriodReports, key)) {
-    setOwnValue(state.projectPeriodReports, key, Object.create(null));
-  }
-  setOwnValue(state.projectPeriodReports[key], project, report);
+  setOwnValue(state.periodReviews[context.key], project, record);
 }
 
 function renderReview() {
   const review = readDailyReview() ?? {};
   const completedCount = state.tasks.filter((task) => task.date === selectedDate && task.completed).length;
   const logCount = state.logs.filter((log) => log.date === selectedDate && !log.sourceTaskId).length;
-  const openTitles = makeDailyReviewDraft(selectedDate).next;
-  elements.reviewNext.placeholder = openTitles
-    ? `未完成的待办：\n${openTitles}`
-    : "明天优先推进什么？未完成的待办会自动列在这里。";
   elements.reviewDaySummary.textContent = completedCount || logCount
     ? `今天完成了 ${completedCount} 项待办，另有 ${logCount} 条工作记录，详见工作时间线。`
     : "今天还没有工作记录。";
-  setFieldValue(elements.reviewBlockers, review.blockers ?? "");
-  setFieldValue(elements.reviewNext, review.next ?? "");
-  elements.reviewTitle.textContent = "给今天一个交代";
-  elements.reviewState.textContent = review.completedAt ? `已于 ${formatTime(review.completedAt)} 完成复盘` : "内容会自动保存";
-  elements.saveReview.textContent = review.completedAt ? "更新今日复盘" : "完成今日复盘";
+  setFieldValue(elements.reviewContent, review.content ?? "");
 }
 
 function renderProgress() {
   const tasks = state.tasks.filter((task) => task.date === selectedDate);
-  const completed = tasks.filter((task) => task.completed).length;
-  const progress = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+  // With focus items picked, the ring tracks those; otherwise every task of the day.
+  const focus = tasks.filter((task) => task.focus);
+  const scope = focus.length ? focus : tasks;
+  const completed = scope.filter((task) => task.completed).length;
+  const progress = scope.length ? Math.round((completed / scope.length) * 100) : 0;
   const circumference = 2 * Math.PI * 31;
   elements.scoreRing.style.strokeDashoffset = String(circumference * (1 - progress / 100));
-  elements.scoreNumber.textContent = `${progress}%`;
+  elements.scoreNumber.textContent = focus.length ? `${completed}/${focus.length}` : `${progress}%`;
+  elements.scoreLabel.textContent = focus.length ? "重点完成" : "完成度";
 }
 
 function startOfPeriod(type, anchor) {
@@ -2112,6 +2336,7 @@ function endOfPeriod(type, start) {
 
 function shiftPeriod(type, anchor, offset) {
   const shifted = startOfPeriod(type, anchor);
+  if (type === "day") shifted.setDate(shifted.getDate() + offset);
   if (type === "week") shifted.setDate(shifted.getDate() + offset * 7);
   if (type === "month") shifted.setMonth(shifted.getMonth() + offset);
   if (type === "quarter") shifted.setMonth(shifted.getMonth() + offset * 3);
@@ -2129,11 +2354,34 @@ function daysBetween(start, end) {
   return days;
 }
 
+const MAX_RANGE_DAYS = 366;
+
+function rangePreset(kind) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const todayKey = toDateKey(today);
+  const ranges = {
+    "first-half": [`${year}-01-01`, `${year}-06-30`],
+    "second-half": [`${year}-07-01`, `${year}-12-31`],
+    "year-to-date": [`${year}-01-01`, todayKey],
+    "last-year": [`${year - 1}-01-01`, `${year - 1}-12-31`],
+  };
+  const [from, to] = ranges[kind];
+  return { from, to: to > todayKey && kind !== "last-year" ? todayKey : to };
+}
+
+function defaultSummaryRange() {
+  return rangePreset(new Date().getMonth() < 6 ? "first-half" : "second-half");
+}
+
 function getSummaryContext() {
-  const start = startOfPeriod(summaryPeriod, summaryAnchor);
-  const end = endOfPeriod(summaryPeriod, start);
+  const custom = summaryPeriod === "range";
+  summaryRange ??= defaultSummaryRange();
+  const start = custom ? fromDateKey(summaryRange.from) : startOfPeriod(summaryPeriod, summaryAnchor);
+  const end = custom ? fromDateKey(summaryRange.to) : endOfPeriod(summaryPeriod, start);
   const startKey = toDateKey(start);
   const endKey = toDateKey(end);
+  const key = custom ? `range:${startKey}:${endKey}` : `${summaryPeriod}:${startKey}`;
   const matchesProject = (item) => !summaryProject || item.project === summaryProject;
   const tasks = state.tasks.filter((task) => task.date >= startKey && task.date <= endKey && matchesProject(task));
   const logs = state.logs.filter((log) => log.date >= startKey && log.date <= endKey && matchesProject(log));
@@ -2141,14 +2389,21 @@ function getSummaryContext() {
   const activeDays = days.filter((date) => (
     tasks.some((task) => task.date === date)
     || logs.some((log) => log.date === date)
-    || (!summaryProject && Boolean(state.notes[date]?.trim()))
-    || (!summaryProject && Boolean(Object.values(state.reviews[date] ?? {})
-      .some((value) => typeof value === "string" && value.trim())))
+    || (!summaryProject && Boolean(state.reviews[date]?.content?.trim()))
   ));
-  return { start, end, startKey, endKey, tasks, logs, days, activeDays };
+  return { type: summaryPeriod, key, start, end, startKey, endKey, tasks, logs, days, activeDays };
+}
+
+function formatContextHeading(context) {
+  if (context.type !== "range") return formatPeriodHeading(context.type, context.start);
+  return `${formatShortDate(context.start, true)} — ${formatShortDate(context.end, true)}`;
 }
 
 function formatPeriodHeading(type, start) {
+  if (type === "day") {
+    const weekday = new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(start);
+    return `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 · ${weekday}`;
+  }
   if (type === "week") {
     const thursday = new Date(start);
     thursday.setDate(thursday.getDate() + 3);
@@ -2171,22 +2426,34 @@ function formatShortDate(date, includeYear = false) {
   }).format(date);
 }
 
+function trendGranularity(context) {
+  if (context.type !== "range") return { day: "day", week: "day", month: "day", quarter: "week", year: "month" }[context.type];
+  return context.days.length <= 31 ? "day" : context.days.length <= 120 ? "week" : "month";
+}
+
 function makeTrendBuckets(context) {
-  const bucketSize = summaryPeriod === "quarter" ? 7 : summaryPeriod === "year" ? null : 1;
+  const granularity = trendGranularity(context);
   const buckets = [];
-  if (summaryPeriod === "year") {
-    for (let month = 0; month < 12; month += 1) {
-      const start = new Date(context.start.getFullYear(), month, 1);
-      const end = new Date(context.start.getFullYear(), month + 1, 0);
-      buckets.push({ label: `${month + 1}月`, start: toDateKey(start), end: toDateKey(end) });
+  if (granularity === "month") {
+    const cursor = new Date(context.start.getFullYear(), context.start.getMonth(), 1);
+    const multiYear = context.start.getFullYear() !== context.end.getFullYear();
+    while (cursor <= context.end) {
+      const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+      buckets.push({
+        label: multiYear && cursor.getMonth() === 0 ? `${cursor.getFullYear() % 100}年1月` : `${cursor.getMonth() + 1}月`,
+        start: toDateKey(cursor < context.start ? context.start : cursor),
+        end: toDateKey(monthEnd > context.end ? context.end : monthEnd),
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
     }
   } else {
+    const bucketSize = granularity === "week" ? 7 : 1;
     for (let index = 0; index < context.days.length; index += bucketSize) {
       const slice = context.days.slice(index, index + bucketSize);
       const start = fromDateKey(slice[0]);
-      const label = summaryPeriod === "week"
+      const label = context.type === "week"
         ? new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(start)
-        : summaryPeriod === "month"
+        : context.type === "month"
           ? String(start.getDate())
           : `${start.getMonth() + 1}/${start.getDate()}`;
       buckets.push({ label, start: slice[0], end: slice.at(-1) });
@@ -2328,8 +2595,8 @@ function getAchievementExportSnapshot() {
   const context = getSummaryContext();
   return {
     achievements: getAchievements(context),
-    periodHeading: formatPeriodHeading(summaryPeriod, context.start),
-    periodIdentifier: `${summaryPeriod}-${context.startKey}`,
+    periodHeading: formatContextHeading(context),
+    periodIdentifier: context.key.replaceAll(":", "-"),
     dateRange: `${context.startKey} — ${context.endKey}`,
     projectScope: summaryProject || "全部项目",
     exportedAt: new Date(),
@@ -2551,33 +2818,54 @@ function renderAchievements(items) {
   elements.summaryAchievementsNext.disabled = summaryAchievementPage >= totalPages - 1;
 }
 
+function reportLabel(context = getSummaryContext()) {
+  return PERIODS[context.type].reportLabel;
+}
+
 function renderSummaryReview(context) {
-  const review = readPeriodReview(context) ?? {};
-  setFieldValue(elements.summaryBlockers, review.blockers ?? "");
-  const report = readPeriodReport(context) ?? {};
-  if (elements.summaryAiReport.value !== (report.content ?? "")) elements.summaryAiReport.value = report.content ?? "";
-  const periodLabel = PERIODS[summaryPeriod].reviewLabel;
-  elements.summaryReviewTitle.textContent = `${formatPeriodHeading(summaryPeriod, context.start)}${summaryProject ? ` · ${summaryProject}` : ""}复盘`;
-  elements.summaryReviewState.textContent = review.completedAt ? `已于 ${formatTime(review.completedAt)} 完成复盘` : "内容会自动保存";
-  elements.saveSummaryReview.textContent = review.completedAt ? `更新${periodLabel}复盘` : `完成${periodLabel}复盘`;
+  const record = normalizePeriodRecord(readPeriodRecord(context));
+  setFieldValue(elements.summaryBlockers, record.notes);
+  setFieldValue(elements.summaryAiReport, record.report);
+  const label = reportLabel(context);
+  elements.summaryReviewTitle.textContent = `${formatContextHeading(context)}${summaryProject ? ` · ${summaryProject}` : ""} ${label}`;
+  elements.summaryReportLabel.textContent = `AI ${label}`;
+  if (!aiSummaryLoading) elements.generateAiSummary.querySelector("span").textContent = `生成 AI ${label}`;
+  elements.summaryReviewCopy.textContent = context.type === "range"
+    ? "把这段时间的成果、周报和时间投入整理成按主题分组的总结，适合述职、绩效评估或简历素材；可直接编辑，补充说明用来记下问题与反思。"
+    : "成果和未完成事项见上方列表。AI 汇报根据这段时间的记录生成，可直接编辑；补充说明用来记下问题与反思。";
+}
+
+function renderSummaryRangeControls(context) {
+  const custom = context.type === "range";
+  elements.summaryRangeControls.hidden = !custom;
+  elements.summaryPrevious.hidden = custom;
+  elements.summaryNext.hidden = custom;
+  if (!custom) return;
+  elements.summaryCurrent.hidden = true;
+  setFieldValue(elements.summaryRangeFrom, context.startKey);
+  setFieldValue(elements.summaryRangeTo, context.endKey);
+  elements.summaryRangePresets.forEach((button) => {
+    const preset = rangePreset(button.dataset.range);
+    button.classList.toggle("active", preset.from === context.startKey && preset.to === context.endKey);
+  });
 }
 
 function renderSummary() {
   if (currentRoute.key !== "summary") return;
-  state.periodReviews ??= {};
-  state.projectPeriodReviews ??= {};
   const context = getSummaryContext();
   const completed = context.tasks.filter((task) => task.completed).length;
-  const currentStart = startOfPeriod(summaryPeriod, new Date());
-  const isCurrent = context.startKey === toDateKey(currentStart);
+  const isCurrent = context.type === "range" || context.startKey === toDateKey(startOfPeriod(summaryPeriod, new Date()));
   elements.periodTabs.forEach((tab) => {
     const active = tab.dataset.period === summaryPeriod;
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-pressed", String(active));
   });
-  elements.summaryPeriodLabel.textContent = formatPeriodHeading(summaryPeriod, context.start);
-  elements.summaryPeriodRange.textContent = `${formatShortDate(context.start, context.start.getFullYear() !== context.end.getFullYear())} — ${formatShortDate(context.end, true)}`;
+  elements.summaryPeriodLabel.textContent = context.type === "range" ? "自定义时间段" : formatPeriodHeading(summaryPeriod, context.start);
+  elements.summaryPeriodRange.textContent = context.startKey === context.endKey
+    ? formatShortDate(context.start, true)
+    : `${formatShortDate(context.start, context.start.getFullYear() !== context.end.getFullYear())} — ${formatShortDate(context.end, true)}`;
   elements.summaryCurrent.hidden = isCurrent;
+  renderSummaryRangeControls(context);
   elements.summaryCompleted.textContent = String(completed);
   elements.summaryTaskTotal.textContent = `共 ${context.tasks.length} 项`;
   elements.summaryRate.textContent = `${context.tasks.length ? Math.round((completed / context.tasks.length) * 100) : 0}%`;
@@ -2592,43 +2880,61 @@ function renderSummary() {
   renderAchievements(achievements);
   renderSummaryList(elements.summaryOpenItems, openItems, "这个周期没有未完成事项");
   renderSummaryReview(context);
+  renderSummaryGoals(context);
   void renderAgentTime(context);
 }
 
-function saveSummaryReviewDraft({ defer = false } = {}) {
-  const context = getSummaryContext();
-  const previous = readPeriodReview(context) ?? {};
-  writePeriodReview(context, summaryProject, {
-    ...previous,
-    blockers: elements.summaryBlockers.value,
+// Goals of the weeks that start inside the range; a project scope keeps goals with a linked task in it.
+function renderSummaryGoals(context) {
+  const firstWeek = weekKeyOf(context.startKey);
+  const goals = (state.goals ?? [])
+    .filter((goal) => goal.week >= firstWeek && goal.week <= context.endKey)
+    .map((goal) => {
+      const linked = state.tasks.filter((task) => task.goalId === goal.id && (!summaryProject || task.project === summaryProject));
+      return { goal, completed: linked.filter((task) => task.completed).length, total: linked.length };
+    })
+    .filter((entry) => !summaryProject || entry.total)
+    .sort((a, b) => a.goal.week.localeCompare(b.goal.week) || a.goal.createdAt.localeCompare(b.goal.createdAt));
+  elements.summaryGoalsCard.hidden = !goals.length;
+  if (!goals.length) return;
+  elements.summaryGoalsTotal.textContent = `达成 ${goals.filter((entry) => entry.goal.done).length}/${goals.length}`;
+  const multiWeek = new Set(goals.map((entry) => entry.goal.week)).size > 1;
+  elements.summaryGoalList.innerHTML = goals.map(({ goal, completed, total }) => `
+    <div class="summary-goal${goal.done ? " done" : ""}">
+      <span class="summary-goal-state" aria-label="${goal.done ? "已达成" : "未达成"}">${goal.done ? "✓" : ""}</span>
+      <div><strong>${escapeHtml(goal.title)}</strong><small>${multiWeek ? `${shortDateLabel(goal.week)} 那周 · ` : ""}${total ? `关联待办 ${completed}/${total}` : "没有关联待办"}</small></div>
+    </div>`).join("");
+}
+
+function setSummaryRange(from, to) {
+  if (!from || !to) return;
+  const span = daysBetween(fromDateKey(from), fromDateKey(to)).length;
+  if (from > to || span > MAX_RANGE_DAYS) {
+    showToast(from > to ? "开始日期不能晚于结束日期" : "时间段最长一年");
+    renderSummary();
+    return;
+  }
+  summaryRange = { from, to };
+  renderSummary();
+}
+
+// Saves both fields of the period record; the textareas always mirror the current scope.
+function savePeriodRecordDraft({ defer = false, successMessage = "已保存到 SQLite", onSaved } = {}) {
+  writePeriodRecord(getSummaryContext(), summaryProject, {
+    report: elements.summaryAiReport.value,
+    notes: elements.summaryBlockers.value,
   });
   const saveVersion = ++summarySaveVersion;
   elements.summaryReviewState.textContent = "保存中…";
   persist({
     defer,
     onSaved: () => {
-      if (saveVersion === summarySaveVersion) elements.summaryReviewState.textContent = "已保存到 SQLite";
-    },
-    onError: () => {
-      if (saveVersion === summarySaveVersion) elements.summaryReviewState.textContent = "保存失败，请重试";
-    },
-  });
-}
-
-function saveSummaryAiReportDraft({ defer = false, successMessage = "已保存到 SQLite", onSaved } = {}) {
-  const context = getSummaryContext();
-  writePeriodReport(context, summaryProject, { content: elements.summaryAiReport.value });
-  const saveVersion = ++summaryAiReportSaveVersion;
-  elements.summaryReviewState.textContent = "保存中…";
-  persist({
-    defer,
-    onSaved: () => {
-      if (saveVersion !== summaryAiReportSaveVersion) return;
+      if (saveVersion !== summarySaveVersion) return;
       elements.summaryReviewState.textContent = successMessage;
       onSaved?.();
     },
     onError: () => {
-      if (saveVersion === summaryAiReportSaveVersion) elements.summaryReviewState.textContent = "保存失败，请重试";
+      if (saveVersion === summarySaveVersion) elements.summaryReviewState.textContent = "保存失败，请重试";
     },
   });
 }
@@ -2637,32 +2943,32 @@ function setAiSummaryLoading(loading) {
   aiSummaryLoading = loading;
   elements.generateAiSummary.disabled = loading;
   elements.generateAiSummary.classList.toggle("loading", loading);
-  elements.generateAiSummary.querySelector("span").textContent = loading ? "AI 正在整理…" : "生成 AI 周报";
+  elements.generateAiSummary.querySelector("span").textContent = loading ? "AI 正在整理…" : `生成 AI ${reportLabel()}`;
   elements.generateAiSummary.setAttribute("aria-busy", String(loading));
 }
 
 async function generateAiSummary() {
   if (aiSummaryLoading) return;
   const existingValue = elements.summaryAiReport.value;
-  if (existingValue.trim() && !window.confirm("AI 周报会覆盖当前「AI 周报」编辑框的内容，是否继续？")) return;
   const context = getSummaryContext();
-  const requestedPeriod = summaryPeriod;
+  const label = reportLabel(context);
+  if (existingValue.trim() && !window.confirm(`AI ${label}会覆盖当前「AI ${label}」编辑框的内容，是否继续？`)) return;
   const requestedProject = summaryProject;
+  const scope = requestedProject ? { project: requestedProject } : {};
   setAiSummaryLoading(true);
-  elements.summaryReviewState.textContent = "AI 正在整理当前周期…";
+  elements.summaryReviewState.textContent = context.type === "range"
+    ? "AI 正在整理这段时间的成果，可能需要一两分钟…"
+    : "AI 正在整理当前周期…";
   try {
     const result = await requestJson("/api/ai/period-report", {
       method: "POST",
-      body: JSON.stringify({
-        periodType: requestedPeriod,
-        periodStart: context.startKey,
-        ...(requestedProject ? { project: requestedProject } : {}),
-      }),
+      body: JSON.stringify(context.type === "range"
+        ? { periodType: "range", from: context.startKey, to: context.endKey, ...scope }
+        : { periodType: context.type, periodStart: context.startKey, ...scope }),
     });
-    const currentContext = getSummaryContext();
-    if (summaryPeriod !== requestedPeriod || summaryProject !== requestedProject || currentContext.startKey !== context.startKey) {
-      elements.summaryReviewState.textContent = "周期已切换，本次 AI 结果未填入";
-      showToast("周期已切换，请在当前周期重新生成 AI 周报");
+    if (summaryProject !== requestedProject || getSummaryContext().key !== context.key) {
+      elements.summaryReviewState.textContent = "时间范围已切换，本次 AI 结果未填入";
+      showToast(`时间范围已切换，请重新生成 AI ${label}`);
       return;
     }
     if (elements.summaryAiReport.value !== existingValue) {
@@ -2671,26 +2977,37 @@ async function generateAiSummary() {
       return;
     }
     elements.summaryAiReport.value = result.report;
-    saveSummaryAiReportDraft({
+    savePeriodRecordDraft({
       successMessage: `由 ${result.provider} · ${result.model} 生成并已保存`,
-      onSaved: () => showToast("AI 周报已生成并保存"),
+      onSaved: () => showToast(`AI ${label}已生成并保存`),
     });
   } catch (error) {
-    elements.summaryReviewState.textContent = "AI 周报生成失败，原内容未改变";
+    elements.summaryReviewState.textContent = `AI ${label}生成失败，原内容未改变`;
     if (["AI_DEFAULT_PROVIDER_MISSING", "AI_KEY_MISSING", "AI_KEY_UNREADABLE", "AI_MODEL_MISSING"].includes(error.code)) {
       showToast(`${error.message}，请前往「设置 → AI 服务」`);
     } else {
-      showToast(`AI 周报生成失败：${error.message}`);
+      showToast(`AI ${label}生成失败：${error.message}`);
     }
   } finally {
     setAiSummaryLoading(false);
   }
 }
 
+function downloadSummaryReport() {
+  const text = elements.summaryAiReport.value.trim();
+  if (!text) {
+    showToast(`还没有可下载的 AI ${reportLabel()}内容`);
+    return;
+  }
+  const context = getSummaryContext();
+  const name = ["MyDays", reportLabel(context), sanitizeFilenamePart(context.key.replaceAll(":", "-")), sanitizeFilenamePart(summaryProject || "全部项目")].join("-");
+  downloadBlob(new Blob([`${text}\n`], { type: "text/markdown;charset=utf-8" }), `${name}.md`);
+}
+
 async function copySummaryReport() {
   const text = elements.summaryAiReport.value.trim();
   if (!text) {
-    showToast("还没有可复制的 AI 周报内容");
+    showToast(`还没有可复制的 AI ${reportLabel()}内容`);
     return;
   }
   try {
@@ -2702,28 +3019,7 @@ async function copySummaryReport() {
     elements.summaryAiReport.setSelectionRange(0, 0);
     if (!copied) throw new Error("copy-failed");
   }
-  showToast("AI 周报已复制");
-}
-
-function completeSummaryReview() {
-  const context = getSummaryContext();
-  writePeriodReview(context, summaryProject, {
-    ...(readPeriodReview(context) ?? {}),
-    blockers: elements.summaryBlockers.value,
-    completedAt: new Date().toISOString(),
-  });
-  const saveVersion = ++summarySaveVersion;
-  elements.summaryReviewState.textContent = "保存中…";
-  persist({
-    onSaved: () => {
-      if (saveVersion !== summarySaveVersion) return;
-      renderSummaryReview(context);
-      showToast("周期复盘已保存");
-    },
-    onError: () => {
-      if (saveVersion === summarySaveVersion) elements.summaryReviewState.textContent = "保存失败，请重试";
-    },
-  });
+  showToast(`AI ${reportLabel()}已复制`);
 }
 
 async function loadAiProviders({ keepSelection = true } = {}) {
@@ -3098,6 +3394,7 @@ function setCaptureType(type, { focus = true } = {}) {
   });
   elements.priorityField.hidden = type !== "task";
   elements.captureMoreButton.hidden = type !== "task";
+  elements.captureDueQuick.hidden = type !== "task";
   if (type !== "task") setCaptureExtraOpen(false);
   elements.captureInput.placeholder = type === "task"
     ? "写下需要完成的事，按 Enter 保存…"
@@ -3166,6 +3463,7 @@ function adoptCapturePolish() {
   const polished = elements.capturePolishText.textContent;
   if (!polished || elements.capturePolishSuggestion.hidden) return;
   elements.captureInput.value = polished;
+  autosizeCaptureInput();
   clearCapturePolish();
   elements.captureInput.focus();
   showToast("已采用润色建议，确认后再添加");
@@ -3236,8 +3534,19 @@ function moveCaptureOptionFocus(root, offset) {
   options[nextIndex]?.focus();
 }
 
+// The today page keeps tasks, timeline and review as sections; a hash scrolls to one of them.
+function scrollToRouteSection(behavior = "smooth") {
+  const section = currentRoute.key === "today" && window.location.hash
+    ? document.getElementById(window.location.hash.slice(1))
+    : null;
+  if (section) section.scrollIntoView({ behavior, block: "start" });
+  else window.scrollTo({ top: 0, behavior });
+}
+
 function navigateTo(target, { replace = false } = {}) {
-  const [pathname, hash = ""] = target.split("#");
+  let [pathname, hash = ""] = target.split("#");
+  const alias = ROUTE_ALIASES[normalizePath(pathname)];
+  if (alias) [pathname, hash] = [alias[0], hash || alias[1]];
   const normalizedPath = normalizePath(pathname);
   const nextRoute = ROUTES[normalizedPath];
   if (!nextRoute) return;
@@ -3248,7 +3557,7 @@ function navigateTo(target, { replace = false } = {}) {
   else window.history.pushState({}, "", url);
   currentRoute = nextRoute;
   render();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  scrollToRouteSection();
 }
 
 function changeDate(offset) {
@@ -3270,7 +3579,6 @@ function addCapture(event) {
   }
 
   const project = elements.projectSelect.value;
-  const previousDraft = makeDailyReviewDraft(selectedDate);
   const now = new Date().toISOString();
   if (captureType === "task") {
     const schedule = readCaptureSchedule();
@@ -3280,7 +3588,8 @@ function addCapture(event) {
       return;
     }
     const priority = elements.prioritySelect.value;
-    const task = { date: selectedDate, title, project, priority, completed: false, createdAt: now, completedAt: null, originDate: null };
+    const goalId = elements.captureGoal.value || null;
+    const task = { date: selectedDate, title, project, priority, completed: false, createdAt: now, completedAt: null, originDate: null, focus: false, goalId };
     if (schedule.rule) {
       const date = fromDateKey(selectedDate);
       const recurrence = {
@@ -3318,6 +3627,7 @@ function addCapture(event) {
     }
     if (schedule.remindMinutes !== null) requestNotificationPermission();
     resetCaptureExtra();
+    elements.captureGoal.value = "";
   } else {
     state.logs.push({
       id: makeId(),
@@ -3330,8 +3640,8 @@ function addCapture(event) {
   }
 
   elements.captureInput.value = "";
+  autosizeCaptureInput();
   clearCapturePolish();
-  reconcileDailyReview(selectedDate, previousDraft);
   persist();
   render();
   elements.captureInput.focus();
@@ -3340,7 +3650,6 @@ function addCapture(event) {
 function toggleTask(id) {
   const task = state.tasks.find((entry) => entry.id === id);
   if (!task) return;
-  const previousDraft = makeDailyReviewDraft(task.date);
   task.completed = !task.completed;
   task.completedAt = task.completed ? new Date().toISOString() : null;
 
@@ -3358,7 +3667,6 @@ function toggleTask(id) {
     state.logs = state.logs.filter((log) => log.sourceTaskId !== task.id);
     showToast("待办已恢复为进行中");
   }
-  reconcileDailyReview(task.date, previousDraft);
   persist();
   render();
 }
@@ -3366,11 +3674,9 @@ function toggleTask(id) {
 function deleteTask(id) {
   const task = state.tasks.find((entry) => entry.id === id);
   if (!task || !window.confirm(`确定删除待办“${task.title}”吗？`)) return;
-  const previousDraft = makeDailyReviewDraft(task.date);
   state.tasks = state.tasks.filter((entry) => entry.id !== id);
   state.logs = state.logs.filter((log) => log.sourceTaskId !== id);
   if (entryEdit?.kind === "task" && entryEdit.id === id) entryEdit = null;
-  reconcileDailyReview(task.date, previousDraft);
   persist();
   render();
   showToast("待办已删除");
@@ -3379,106 +3685,58 @@ function deleteTask(id) {
 function deleteLog(id) {
   const log = state.logs.find((entry) => entry.id === id);
   if (!log || !window.confirm(`确定删除工作记录“${log.title}”吗？`)) return;
-  const previousDraft = makeDailyReviewDraft(log.date);
   state.logs = state.logs.filter((entry) => entry.id !== id);
   if ((entryEdit?.kind === "log" && entryEdit.id === id) || (entryEdit?.host === "log" && entryEdit.hostId === id)) entryEdit = null;
-  reconcileDailyReview(log.date, previousDraft);
   persist();
   render();
   showToast("工作记录已删除");
 }
 
 function saveReviewDraft({ defer = false } = {}) {
-  const previous = readDailyReview() ?? {};
-  writeDailyReview(selectedDate, {
-    ...previous,
-    blockers: elements.reviewBlockers.value,
-    next: elements.reviewNext.value,
+  const content = elements.reviewContent.value;
+  // An emptied review drops its row instead of keeping a blank one.
+  if (content.trim()) writeDailyReview(selectedDate, { content });
+  else delete state.reviews[selectedDate];
+  elements.reviewState.textContent = "保存中…";
+  persist({
+    defer,
+    onSaved: () => { elements.reviewState.textContent = "已自动保存"; },
+    onError: () => { elements.reviewState.textContent = "保存失败，请重试"; },
   });
-  persist({ defer });
-  elements.reviewState.textContent = "草稿已自动保存";
-}
-
-// What got done already lives in the timeline, so the daily review only pre-fills "tomorrow" from open tasks.
-function makeDailyReviewDraft(date = selectedDate) {
-  const openTasks = state.tasks.filter((task) => task.date === date && !task.completed);
-  return {
-    next: openTasks.length ? openTasks.slice(0, 5).map((task) => `• ${task.title}`).join("\n") : "",
-    hasRecords: Boolean(openTasks.length),
-  };
-}
-
-function reconcileDailyReview(date, previousDraft) {
-  const nextDraft = makeDailyReviewDraft(date);
-  const existingReview = readDailyReview(date);
-  if (!existingReview) {
-    if (!nextDraft.hasRecords) return false;
-    writeDailyReview(date, { wins: "", blockers: "", next: nextDraft.next });
-    if (date === selectedDate) elements.reviewState.textContent = "已自动同步最新工作记录";
-    return true;
-  }
-  const review = existingReview;
-  let changed = false;
-  if (!(review.next ?? "").trim() || review.next === previousDraft.next) {
-    if (review.next !== nextDraft.next) {
-      review.next = nextDraft.next;
-      changed = true;
-    }
-  }
-  if (changed && date === selectedDate) elements.reviewState.textContent = "已自动同步最新工作记录";
-  return changed;
-}
-
-function completeReview() {
-  const previous = readDailyReview() ?? {};
-  writeDailyReview(selectedDate, {
-    ...previous,
-    blockers: elements.reviewBlockers.value,
-    next: elements.reviewNext.value,
-    completedAt: new Date().toISOString(),
-  });
-  persist();
-  renderReview();
-  showToast("今天收好了，辛苦了");
 }
 
 const SEARCH_RESULT_LIMIT = 50;
-const PERIOD_KEY_PATTERN = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/;
+const PERIOD_KEY_PATTERN = /^(?:(day|week|month|quarter|year):(\d{4}-\d{2}-\d{2})|range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2}))$/;
 let searchMatches = [];
 let searchActiveIndex = 0;
 
 // Everything is already in memory, so search runs entirely in the browser over the current state.
 function buildSearchEntries() {
   const entries = [];
-  const reviewText = (review) => [review?.wins, review?.blockers, review?.next].filter(Boolean).join("\n");
   for (const task of state.tasks) {
-    entries.push({ kind: task.completed ? "已完成待办" : "待办", date: task.date, title: task.title, text: `${task.title} ${task.project ?? ""}`, project: task.project, target: { route: "/tasks", date: task.date } });
+    entries.push({ kind: task.completed ? "已完成待办" : "待办", date: task.date, title: task.title, text: `${task.title} ${task.project ?? ""}`, project: task.project, target: { route: "/#tasks", date: task.date } });
   }
   for (const log of state.logs) {
     if (log.sourceTaskId) continue;
-    entries.push({ kind: log.source === "agent-digest" ? "AI 整理" : "工作记录", date: log.date, title: log.title, text: `${log.title} ${log.project ?? ""}`, project: log.project, target: { route: "/timeline", date: log.date } });
+    entries.push({ kind: log.source === "agent-digest" ? "AI 整理" : "工作记录", date: log.date, title: log.title, text: `${log.title} ${log.project ?? ""}`, project: log.project, target: { route: "/#timeline", date: log.date } });
   }
-  for (const [date, content] of Object.entries(state.notes)) {
-    if (content?.trim()) entries.push({ kind: "笔记", date, title: "临时笔记", text: content, target: { route: "/", date } });
+  for (const goal of state.goals ?? []) {
+    entries.push({ kind: goal.done ? "已达成目标" : "本周目标", date: goal.week, title: goal.title, text: goal.title, target: { route: "/#goals", date: goal.week } });
   }
   for (const [date, review] of Object.entries(state.reviews)) {
-    const text = reviewText(review);
-    if (text.trim()) entries.push({ kind: "今日复盘", date, title: "今日复盘", text, target: { route: "/review", date } });
+    if (review?.content?.trim()) entries.push({ kind: "今日复盘", date, title: "今日复盘", text: review.content, target: { route: "/#review", date } });
   }
-  const addPeriod = (key, project, kind, text) => {
+  for (const [key, projects] of Object.entries(state.periodReviews)) {
     const match = PERIOD_KEY_PATTERN.exec(key);
-    if (!match || !text?.trim()) return;
-    const [, type, start] = match;
-    const heading = formatPeriodHeading(type, fromDateKey(start));
-    entries.push({ kind, date: start, title: project ? `${heading} · ${project}` : heading, text, target: { route: "/summary", period: type, start, project } });
-  };
-  for (const [key, review] of Object.entries(state.periodReviews)) addPeriod(key, "", "周期复盘", reviewText(review));
-  for (const [key, report] of Object.entries(state.periodReports ?? {})) addPeriod(key, "", "周期汇报", report?.content);
-  for (const [key, projects] of Object.entries(state.projectPeriodReviews ?? {})) {
-    for (const [project, review] of Object.entries(projects)) addPeriod(key, project, "周期复盘", reviewText(review));
-  }
-  for (const [key, projects] of Object.entries(state.projectPeriodReports ?? {})) {
-    for (const [project, report] of Object.entries(projects)) addPeriod(key, project, "周期汇报", report?.content);
+    if (!match) continue;
+    const [type, start, end] = match[1] ? [match[1], match[2], null] : ["range", match[3], match[4]];
+    const heading = end ? `${start} — ${end}` : formatPeriodHeading(type, fromDateKey(start));
+    for (const [project, record] of Object.entries(projects)) {
+      const target = { route: "/summary", period: type, start, end, project };
+      const title = project ? `${heading} · ${project}` : heading;
+      if (record?.report?.trim()) entries.push({ kind: `AI ${PERIODS[type].reportLabel}`, date: start, title, text: record.report, target });
+      if (record?.notes?.trim()) entries.push({ kind: "周期补充说明", date: start, title, text: record.notes, target });
+    }
   }
   return entries;
 }
@@ -3565,7 +3823,8 @@ function openSearchResult(index) {
   clearCapturePolish();
   if (target.period) {
     summaryPeriod = target.period;
-    summaryAnchor = fromDateKey(target.start);
+    if (target.end) summaryRange = { from: target.start, to: target.end };
+    else summaryAnchor = fromDateKey(target.start);
     summaryProject = target.project ?? "";
   } else {
     selectedDate = target.date;
@@ -3575,74 +3834,10 @@ function openSearchResult(index) {
   navigateTo(target.route);
 }
 
-let achievementsLoading = false;
-
-function achievementRange(kind) {
-  const today = new Date();
-  const year = today.getFullYear();
-  const todayKey = toDateKey(today);
-  const ranges = {
-    "first-half": [`${year}-01-01`, `${year}-06-30`],
-    "second-half": [`${year}-07-01`, `${year}-12-31`],
-    "year-to-date": [`${year}-01-01`, todayKey],
-    "last-year": [`${year - 1}-01-01`, `${year - 1}-12-31`],
-  };
-  const [from, to] = ranges[kind];
-  return [from, to > todayKey && kind !== "last-year" ? todayKey : to];
-}
-
-function selectAchievementRange(kind) {
-  const [from, to] = achievementRange(kind);
-  elements.achievementsFrom.value = from;
-  elements.achievementsTo.value = to;
-  elements.achievementsRanges.forEach((button) => button.classList.toggle("active", button.dataset.range === kind));
-}
-
-function updateAchievementActions() {
-  const hasText = Boolean(elements.achievementsOutput.value.trim());
-  elements.achievementsCopy.disabled = !hasText;
-  elements.achievementsDownload.disabled = !hasText;
-}
-
-function openAchievements() {
-  if (!elements.achievementsFrom.value) selectAchievementRange(new Date().getMonth() < 6 ? "first-half" : "second-half");
-  elements.achievementsScope.textContent = summaryProject ? `范围：项目「${summaryProject}」（与周期汇总的项目筛选一致）` : "范围：全部项目";
-  updateAchievementActions();
-  if (!elements.achievementsDialog.open) elements.achievementsDialog.showModal();
-}
-
-async function generateAchievements() {
-  if (achievementsLoading) return;
-  const from = elements.achievementsFrom.value;
-  const to = elements.achievementsTo.value;
-  if (!from || !to) {
-    elements.achievementsState.textContent = "请选择开始和结束日期";
-    return;
-  }
-  if (elements.achievementsOutput.value.trim() && !window.confirm("重新生成会覆盖当前的总结内容，是否继续？")) return;
-  achievementsLoading = true;
-  elements.achievementsGenerate.disabled = true;
-  elements.achievementsGenerate.textContent = "生成中…";
-  elements.achievementsState.textContent = "AI 正在整理这段时间的成果，可能需要一两分钟…";
-  try {
-    const result = await requestJson("/api/ai/achievements", {
-      method: "POST",
-      body: JSON.stringify({ from, to, ...(summaryProject ? { project: summaryProject } : {}) }),
-    });
-    elements.achievementsOutput.value = result.document;
-    elements.achievementsState.textContent = `由 ${result.provider} · ${result.model} 生成，可以直接编辑；结果不会自动保存。`;
-  } catch (error) {
-    elements.achievementsState.textContent = `生成失败：${error.message}`;
-  } finally {
-    achievementsLoading = false;
-    elements.achievementsGenerate.disabled = false;
-    elements.achievementsGenerate.textContent = "生成";
-    updateAchievementActions();
-  }
-}
-
 const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
-const STATE_MAP_KEYS = ["notes", "reviews", "periodReviews", "projectPeriodReviews", "periodReports", "projectPeriodReports"];
+const STATE_MAP_KEYS = ["reviews", "periodReviews"];
+// Backups exported before notes were folded into reviews; the server converts them on import.
+const LEGACY_STATE_MAP_KEYS = ["notes", "reviews", "periodReviews", "projectPeriodReviews", "periodReports", "projectPeriodReports"];
 
 // Accepts the export format ({ app: "MyDays", data }) and a bare state object; missing maps become empty so the
 // import replaces everything instead of mixing with current data (the server keeps current maps when a key is absent).
@@ -3657,22 +3852,33 @@ function parseBackup(text) {
   if (!data || typeof data !== "object" || !Array.isArray(data.tasks) || !Array.isArray(data.logs)) {
     throw new Error("文件不是 MyDays 导出的数据备份");
   }
-  const normalized = { tasks: data.tasks, recurrences: Array.isArray(data.recurrences) ? data.recurrences : [], logs: data.logs };
-  for (const key of STATE_MAP_KEYS) {
+  const normalized = {
+    tasks: data.tasks,
+    recurrences: Array.isArray(data.recurrences) ? data.recurrences : [],
+    logs: data.logs,
+    goals: Array.isArray(data.goals) ? data.goals : [],
+  };
+  const legacy = Object.hasOwn(data, "notes");
+  for (const key of legacy ? LEGACY_STATE_MAP_KEYS : STATE_MAP_KEYS) {
     normalized[key] = data[key] && typeof data[key] === "object" && !Array.isArray(data[key]) ? data[key] : {};
   }
-  return { data: normalized, exportedAt: typeof parsed?.exportedAt === "string" ? parsed.exportedAt : null };
+  return { data: normalized, legacy, exportedAt: typeof parsed?.exportedAt === "string" ? parsed.exportedAt : null };
 }
 
 function describeBackup(data) {
-  const filled = (map) => Object.values(map).filter((value) => (typeof value === "string" ? value.trim() : value)).length;
+  const periodCount = (map) => Object.values(map).reduce((sum, value) => sum + (value && typeof value === "object" ? Object.keys(value).length : 0), 0);
+  const legacy = Object.hasOwn(data, "notes");
+  const reviewDays = new Set([...Object.keys(data.reviews), ...(legacy ? Object.keys(data.notes) : [])]).size;
+  const periods = legacy
+    ? Object.keys(data.periodReviews).length + Object.keys(data.periodReports).length
+    : periodCount(data.periodReviews);
   return [
     `${data.tasks.length} 条待办`,
     ...(data.recurrences.length ? [`${data.recurrences.length} 个重复待办`] : []),
     `${data.logs.length} 条工作记录`,
-    `${filled(data.notes)} 天笔记`,
-    `${filled(data.reviews)} 天复盘`,
-    `${Object.keys(data.periodReviews).length + Object.keys(data.periodReports).length} 份周期复盘与汇报`,
+    ...(data.goals.length ? [`${data.goals.length} 个周目标`] : []),
+    `${reviewDays} 天复盘${legacy ? "（含旧版笔记）" : ""}`,
+    `${periods} 份周期汇报与说明`,
   ].join("、");
 }
 
@@ -3699,8 +3905,9 @@ async function importBackupFile(file) {
     `导入「${file.name}」${exportedAt}？`,
     "",
     `其中包含：${describeBackup(backup.data)}。`,
+    ...(backup.legacy ? ["", "这是旧版本的备份：每天的笔记和复盘会合并成一段「今日复盘」，旧内容带标签保留。"] : []),
     "",
-    "导入会替换当前全部待办、记录、笔记、复盘和周期汇报；AI 设置、项目选项和 Agent 工作汇总设置不受影响。",
+    "导入会替换当前全部待办、记录、复盘和周期汇报；AI 设置、项目选项和 Agent 工作汇总设置不受影响。",
     "导入前会先自动下载一份当前数据的备份。",
   ].join("\n"));
   if (!confirmed) return;
@@ -3729,7 +3936,7 @@ function exportData({ silent = false, filename = null } = {}) {
   const content = JSON.stringify(
     {
       app: "MyDays",
-      version: 2,
+      version: 3,
       storage: "sqlite",
       exportedAt: new Date().toISOString(),
       data: state,
@@ -3746,7 +3953,25 @@ function exportData({ silent = false, filename = null } = {}) {
 
 elements.captureTabs.forEach((tab) => tab.addEventListener("click", () => setCaptureType(tab.dataset.type)));
 elements.captureForm.addEventListener("submit", addCapture);
-elements.captureInput.addEventListener("input", () => clearCapturePolish());
+// Items are single-line titles: Enter saves (unless an IME is composing) and pasted line breaks become spaces.
+function autosizeCaptureInput() {
+  const input = elements.captureInput;
+  input.style.height = "auto";
+  input.style.height = `${input.scrollHeight}px`;
+}
+
+elements.captureInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  if (!event.shiftKey) elements.captureForm.requestSubmit();
+});
+elements.captureInput.addEventListener("input", () => {
+  if (/[\r\n]/.test(elements.captureInput.value)) {
+    elements.captureInput.value = elements.captureInput.value.replace(/\s*[\r\n]+\s*/g, " ");
+  }
+  autosizeCaptureInput();
+  clearCapturePolish();
+});
 elements.capturePolishButton.addEventListener("click", polishCapture);
 elements.capturePolishAdopt.addEventListener("click", adoptCapturePolish);
 elements.capturePolishCancel.addEventListener("click", () => {
@@ -3861,6 +4086,10 @@ elements.taskList.addEventListener("click", (event) => {
     deleteTask(item.dataset.id);
     return;
   }
+  if (event.target.closest(".focus-toggle")) {
+    toggleFocus(item.dataset.id);
+    return;
+  }
   if (event.target.closest(".task-check")) toggleTask(item.dataset.id);
 });
 elements.taskList.addEventListener("submit", (event) => {
@@ -3915,17 +4144,7 @@ elements.timelineList.addEventListener("keydown", (event) => {
   if (handleEntryEditSelectKeydown(event)) event.stopPropagation();
 });
 
-elements.dailyNote.addEventListener("input", () => {
-  state.notes[selectedDate] = elements.dailyNote.value;
-  elements.noteCount.textContent = `${elements.dailyNote.value.length} / 2000`;
-  persist({ defer: true });
-});
-
-[elements.reviewBlockers, elements.reviewNext].forEach((field) => {
-  field.addEventListener("input", () => saveReviewDraft({ defer: true }));
-});
-
-elements.saveReview.addEventListener("click", completeReview);
+elements.reviewContent.addEventListener("input", () => saveReviewDraft({ defer: true }));
 elements.agentDigestEnabled.addEventListener("change", toggleAgentDigest);
 elements.agentDigestSave.addEventListener("click", saveAgentDigestSettings);
 elements.agentDigestRefresh.addEventListener("click", async () => {
@@ -3963,9 +4182,32 @@ document.addEventListener("visibilitychange", () => {
 function tickTasks() {
   prepareTasksForToday();
   checkTaskReminders();
+  void syncIfServerChanged();
 }
 window.setInterval(tickTasks, 30000);
 elements.captureMoreButton.addEventListener("click", () => setCaptureExtraOpen(elements.captureExtra.hidden));
+elements.captureDueQuick.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-due-quick]");
+  if (button) setCaptureQuickDue(button.dataset.dueQuick);
+});
+document.addEventListener("input", (event) => {
+  if (!event.target.matches('.entry-edit-schedule [data-edit-field="dueDate"]') || !entryEdit) return;
+  event.target.closest(".entry-edit-schedule").querySelectorAll("[data-edit-due]").forEach((entry) => {
+    entry.setAttribute("aria-pressed", String(event.target.value === quickDueDate(entry.dataset.editDue, entryEdit.draft.date)));
+  });
+});
+// Quick deadline buttons inside the inline edit form of a task (in the task list or the timeline).
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-edit-due]");
+  if (!button || !entryEdit || entryEdit.kind !== "task") return;
+  const input = button.closest(".entry-edit-schedule").querySelector('[data-edit-field="dueDate"]');
+  const date = quickDueDate(button.dataset.editDue, entryEdit.draft.date);
+  input.value = input.value === date ? "" : date;
+  updateEntryEditField("dueDate", input.value);
+  button.closest(".due-quick").querySelectorAll("[data-edit-due]").forEach((entry) => {
+    entry.setAttribute("aria-pressed", String(input.value === quickDueDate(entry.dataset.editDue, entryEdit.draft.date)));
+  });
+});
 [elements.captureDueDate, elements.captureDueTime, elements.captureRemind, elements.captureRepeat].forEach((input) => {
   input.addEventListener("change", syncCaptureExtra);
 });
@@ -3979,14 +4221,12 @@ elements.recurrenceList.addEventListener("click", (event) => {
   const remove = event.target.closest("[data-recurrence-delete]");
   if (remove) deleteRecurrence(remove.dataset.recurrenceDelete);
 });
-elements.exportButton.addEventListener("click", () => exportData());
 elements.settingsExportButton.addEventListener("click", () => exportData());
 const chooseBackupFile = () => {
   setAccountMenu(false);
   elements.importFile.value = "";
   elements.importFile.click();
 };
-elements.importButton.addEventListener("click", chooseBackupFile);
 elements.settingsImportButton.addEventListener("click", chooseBackupFile);
 elements.settingsTabs.forEach((tab, index) => {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
@@ -3998,33 +4238,59 @@ elements.settingsTabs.forEach((tab, index) => {
     selectSettingsTab(next.dataset.settingsTab, { focus: true });
   });
 });
-elements.taskSettingsMore.addEventListener("click", (event) => {
-  event.preventDefault();
-  elements.taskSettingsDialog.close();
-  openSettings("general");
-});
 elements.importFile.addEventListener("change", () => importBackupFile(elements.importFile.files[0]));
-if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) elements.searchShortcut.textContent = "Ctrl K";
+if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) elements.searchShortcuts.forEach((key) => { key.textContent = "Ctrl K"; });
 elements.searchTrigger.addEventListener("click", openSearch);
-elements.achievementsOpen.addEventListener("click", openAchievements);
-elements.achievementsClose.addEventListener("click", () => elements.achievementsDialog.close());
-elements.achievementsRanges.forEach((button) => button.addEventListener("click", () => selectAchievementRange(button.dataset.range)));
-[elements.achievementsFrom, elements.achievementsTo].forEach((input) => input.addEventListener("change", () => {
-  elements.achievementsRanges.forEach((button) => button.classList.remove("active"));
-}));
-elements.achievementsOutput.addEventListener("input", updateAchievementActions);
-elements.achievementsGenerate.addEventListener("click", generateAchievements);
-elements.achievementsCopy.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(elements.achievementsOutput.value);
-    showToast("成就总结已复制");
-  } catch {
-    showToast("复制失败，请手动选择复制");
-  }
+elements.sidebarSearch.addEventListener("click", openSearch);
+elements.sidebarProjectList.addEventListener("click", (event) => {
+  const link = event.target.closest("[data-project]");
+  if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  summaryProject = link.dataset.project;
+  summaryAchievementPage = 0;
+  navigateTo("/summary");
 });
-elements.achievementsDownload.addEventListener("click", () => {
-  const name = `mydays-achievements-${elements.achievementsFrom.value}-to-${elements.achievementsTo.value}.md`;
-  downloadBlob(new Blob([elements.achievementsOutput.value], { type: "text/markdown;charset=utf-8" }), name);
+elements.heatmapPrevious.addEventListener("click", () => {
+  heatmapCursor = new Date(heatmapCursor.getFullYear(), heatmapCursor.getMonth() - 1, 1);
+  renderHeatmap();
+});
+elements.heatmapNext.addEventListener("click", () => {
+  heatmapCursor = new Date(heatmapCursor.getFullYear(), heatmapCursor.getMonth() + 1, 1);
+  renderHeatmap();
+});
+elements.heatmapGrid.addEventListener("click", (event) => {
+  const cell = event.target.closest("[data-date]");
+  if (cell) goToDate(cell.dataset.date);
+});
+elements.planList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-plan-add]");
+  if (button) addPlannedTasks([button.closest(".plan-item").dataset.id]);
+});
+elements.planAddAll.addEventListener("click", () => addPlannedTasks(planCandidates().map((task) => task.id)));
+elements.planDismiss.addEventListener("click", () => {
+  try {
+    window.localStorage.setItem(PLAN_DISMISS_STORAGE_KEY, currentDateKey());
+  } catch {}
+  elements.planCard.hidden = true;
+});
+elements.goalAddForm.addEventListener("submit", addGoal);
+elements.goalList.addEventListener("click", (event) => {
+  const row = event.target.closest(".goal-row");
+  if (!row) return;
+  if (event.target.closest("[data-goal-toggle]")) toggleGoal(row.dataset.goalId);
+  if (event.target.closest("[data-goal-delete]")) deleteGoal(row.dataset.goalId);
+});
+elements.upcomingList.addEventListener("click", (event) => {
+  const item = event.target.closest(".upcoming-item");
+  const task = item && state.tasks.find((entry) => entry.id === item.dataset.id);
+  if (!task) return;
+  if (event.target.closest("[data-upcoming-complete]")) toggleTask(task.id);
+  else if (event.target.closest("[data-upcoming-today]")) {
+    moveTaskToDate(task, currentDateKey());
+    persist();
+    render();
+    showToast(`已移到今天：${task.title}`);
+  } else if (event.target.closest("[data-upcoming-open]")) goToDate(task.date);
 });
 elements.searchInput.addEventListener("input", runSearch);
 elements.searchInput.addEventListener("keydown", (event) => {
@@ -4078,7 +4344,14 @@ elements.summaryProjectFilter.addEventListener("change", () => {
   summaryProject = elements.summaryProjectFilter.value;
   renderSummary();
 });
-elements.summaryBlockers.addEventListener("input", () => saveSummaryReviewDraft({ defer: true }));
+elements.summaryBlockers.addEventListener("input", () => savePeriodRecordDraft({ defer: true }));
+elements.summaryRangePresets.forEach((button) => button.addEventListener("click", () => {
+  const { from, to } = rangePreset(button.dataset.range);
+  setSummaryRange(from, to);
+}));
+[elements.summaryRangeFrom, elements.summaryRangeTo].forEach((input) => input.addEventListener("change", () => {
+  setSummaryRange(elements.summaryRangeFrom.value, elements.summaryRangeTo.value);
+}));
 elements.summaryAchievementsPrev.addEventListener("click", () => {
   if (summaryAchievementPage > 0) {
     summaryAchievementPage -= 1;
@@ -4127,8 +4400,8 @@ elements.summaryExportMenu.addEventListener("keydown", (event) => {
 });
 elements.generateAiSummary.addEventListener("click", generateAiSummary);
 elements.copySummaryReport.addEventListener("click", copySummaryReport);
-elements.summaryAiReport.addEventListener("input", () => saveSummaryAiReportDraft({ defer: true }));
-elements.saveSummaryReview.addEventListener("click", completeSummaryReview);
+elements.summaryAiReport.addEventListener("input", () => savePeriodRecordDraft({ defer: true }));
+elements.downloadSummaryReport.addEventListener("click", downloadSummaryReport);
 elements.aiNewProvider.addEventListener("click", resetAiProviderForm);
 elements.aiProviderList.addEventListener("click", (event) => {
   const item = event.target.closest(".ai-provider-item");
@@ -4229,7 +4502,7 @@ window.addEventListener("popstate", () => {
   closeCaptureSelects();
   currentRoute = resolveRoute(window.location.pathname);
   render();
-  window.scrollTo({ top: 0 });
+  scrollToRouteSection("instant");
 });
 window.addEventListener("hashchange", () => {
   if (currentRoute.key === "ai-settings") renderSettingsTabs();
@@ -4274,13 +4547,8 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "/" && !isTyping) {
     event.preventDefault();
-    if (["review", "summary", "ai-settings"].includes(currentRoute.key)) navigateTo("/tasks");
+    if (currentRoute.key !== "today") navigateTo("/");
     window.requestAnimationFrame(() => elements.captureInput.focus());
-  }
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && target === elements.dailyNote) {
-    event.preventDefault();
-    persist();
-    showToast("临时笔记已保存");
   }
 });
 

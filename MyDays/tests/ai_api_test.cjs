@@ -253,12 +253,13 @@ async function waitForApp() {
     assert.equal(JSON.stringify(openaiReportRequest.body).includes("突出项目价值与下周风险。"), true, "汇报提示词必须包含用户的总结偏好");
     assert.equal(openaiReportRequest.body.messages.some((message) => String(message.content).includes('"project":"MyDays"')), true);
     let persistedState = await request("/api/state");
-    assert.deepEqual(persistedState.body.data.periodReviews, {}, "AI 生成结果不得自动保存周期复盘");
-    assert.deepEqual(persistedState.body.data.periodReports, {}, "AI 汇报生成结果不得自动保存到 SQLite");
+    assert.deepEqual(persistedState.body.data.periodReviews, {}, "AI 汇报生成结果不得自动保存到 SQLite");
 
-    result = await request("/api/ai/achievements", { method: "POST", body: JSON.stringify({ from: "2026-07-01", to: "2026-12-31" }) });
+    // A custom range goes through the same endpoint and is written as an achievement summary.
+    const rangeReport = (body) => request("/api/ai/period-report", { method: "POST", body: JSON.stringify({ periodType: "range", ...body }) });
+    result = await rangeReport({ from: "2026-07-01", to: "2026-12-31" });
     assert.equal(result.response.status, 200, JSON.stringify(result.body));
-    assert.equal(result.body.document, "## 概述\n八月完成 2 项成果。\n\n## 主要成就\n- 完成登录体验优化", "应去掉代码围栏");
+    assert.equal(result.body.report, "## 概述\n八月完成 2 项成果。\n\n## 主要成就\n- 完成登录体验优化", "应去掉代码围栏");
     assert.equal(result.body.provider, "Local OpenAI");
     const achievementRequest = requests.find((entry) => entry.url === "/openai/v1/chat/completions"
       && entry.body.messages.some((message) => String(message.content).includes("成就总结")));
@@ -267,12 +268,13 @@ async function waitForApp() {
     assert.equal(achievementPrompt.includes('"omittedAchievements":0'), true);
     assert.equal(achievementPrompt.includes("突出项目价值与下周风险。"), true, "成就总结也应包含用户的总结偏好");
     assert.equal(achievementRequest.body.max_tokens, 4096);
-    for (const body of [{ from: "2026-08-10", to: "2026-08-01" }, { from: "2025-01-01", to: "2026-06-30" }, { from: "bad", to: "2026-08-01" }, "nope"]) {
-      result = await request("/api/ai/achievements", { method: "POST", body: JSON.stringify(body) });
+    assert.equal((await request("/api/ai/achievements", { method: "POST", body: "{}" })).response.status, 404, "成就总结已并入周期汇报接口");
+    for (const body of [{ from: "2026-08-10", to: "2026-08-01" }, { from: "2025-01-01", to: "2026-06-30" }, { from: "bad", to: "2026-08-01" }, {}]) {
+      result = await rangeReport(body);
       assert.equal(result.response.status, 400);
       assert.equal(result.body.error.code, "AI_ACHIEVEMENTS_INVALID");
     }
-    result = await request("/api/ai/achievements", { method: "POST", body: JSON.stringify({ from: "2025-01-01", to: "2025-06-30" }) });
+    result = await rangeReport({ from: "2025-01-01", to: "2025-06-30" });
     assert.equal(result.response.status, 400);
     assert.equal(result.body.error.code, "AI_ACHIEVEMENTS_EMPTY");
 
@@ -541,7 +543,7 @@ async function waitForApp() {
     const stored = database.prepare("SELECT * FROM ai_providers WHERE id = ?").get(openaiId);
     assert.notEqual(stored.api_key_ciphertext, openaiKey);
     assert.equal(JSON.stringify(stored).includes(openaiKey), false);
-    assert.equal(database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
+    assert.equal(database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "13");
     database.close();
     assert.equal(fs.existsSync(path.join(dataDir, ".ai-config-secret")), false, "环境变量密钥不得生成主密钥文件");
 

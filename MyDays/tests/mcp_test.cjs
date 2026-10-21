@@ -68,9 +68,8 @@ function startMcp(env) {
       { op: "log.put", log: { id: "l1", date: "2026-10-12", title: "实现 WebSocket 重连", project: "工作", sourceTaskId: "t1", createdAt: at("2026-10-12", "03") } },
       { op: "task.put", task: { id: "t2", date: "2026-10-13", title: "补充断线测试", project: "工作", priority: "normal", completed: false, createdAt: at("2026-10-13", "01"), completedAt: null } },
       { op: "log.put", log: { id: "l2", date: "2026-10-13", title: "排查 WebSocket 断线原因", project: "工作", sourceTaskId: null, source: "agent-digest", createdAt: at("2026-10-13", "10") } },
-      { op: "note.put", date: "2026-10-13", content: "网关超时是 60 秒" },
-      { op: "review.put", date: "2026-10-13", review: { wins: "", blockers: "断线还没复现", next: "抓包", completedAt: null } },
-      { op: "periodReport.put", key: "week:2026-10-12", report: { content: "本周完成 WebSocket 重连。" } },
+      { op: "review.put", date: "2026-10-13", review: { content: "断线还没复现，网关超时是 60 秒" } },
+      { op: "periodReview.put", key: "week:2026-10-12", review: { report: "本周完成 WebSocket 重连。", notes: "下周抓包" } },
     ];
     let result = await request("/api/state", { method: "PATCH", body: JSON.stringify({ baseRevision: 0, ops }) });
     assert.equal(result.response.status, 200);
@@ -131,8 +130,7 @@ function startMcp(env) {
     const day13 = data.days[1];
     assert.deepEqual(day13.openTasks, [{ title: "补充断线测试", project: "工作" }]);
     assert.deepEqual(day13.workLogs, [{ title: "排查 WebSocket 断线原因", project: "工作", origin: "AI 整理" }]);
-    assert.equal(day13.note, "网关超时是 60 秒");
-    assert.deepEqual(day13.review, { problems: "断线还没复现", tomorrow: "抓包", completed: false });
+    assert.equal(day13.review, "断线还没复现，网关超时是 60 秒");
     assert.deepEqual(data.days[0].workLogs, [], "完成待办生成的记录不重复出现");
 
     data = parse(await mcp.call("tools/call", { name: "mydays_get_period", arguments: { period: "week", date: "2026-10-15" } }));
@@ -141,6 +139,7 @@ function startMcp(env) {
     assert.deepEqual(data.metrics, { completedTasks: 1, totalTasks: 2, workLogs: 1, activeDays: 2, aiCollaborationMinutes: 0 });
     assert.deepEqual(data.achievements.map((item) => item.title), ["实现 WebSocket 重连", "排查 WebSocket 断线原因"]);
     assert.equal(data.report, "本周完成 WebSocket 重连。");
+    assert.equal(data.notes, "下周抓包");
     data = parse(await mcp.call("tools/call", { name: "mydays_get_period", arguments: { period: "month", date: "2026-10-31", project: "不存在" } }));
     assert.equal(data.start, "2026-10-01");
     assert.equal(data.metrics.totalTasks, 0);

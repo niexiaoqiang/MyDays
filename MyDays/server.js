@@ -34,6 +34,8 @@ const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 const MAX_AI_SUMMARY_ITEMS = 120;
 const MAX_AI_REPORT_LENGTH = 8000;
 const MAX_REPORT_CONTENT_LENGTH = 20000;
+const MAX_DAILY_REVIEW_LENGTH = 8000;
+const MAX_PERIOD_NOTES_LENGTH = 16000;
 const MAX_CAPTURE_ENTRY_LENGTH = 120;
 const AI_PERIOD_TASK_MAX_TOKENS = 4096;
 const AI_POLISH_TASK_MAX_TOKENS = 512;
@@ -115,10 +117,9 @@ AI_IPV6_FORBIDDEN.addAddress("fd00:ec2::254", "ipv6");
 const EMPTY_STATE = Object.freeze({
   tasks: [],
   logs: [],
-  notes: {},
+  goals: [],
   reviews: {},
   periodReviews: {},
-  projectPeriodReviews: {},
 });
 
 const STATIC_FILES = new Map([
@@ -127,6 +128,7 @@ const STATIC_FILES = new Map([
   ["/tasks", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/timeline", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/review", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
+  ["/upcoming", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/summary", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/ai-settings", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
   ["/settings", { file: "index.html", type: "text/html; charset=utf-8", cache: "no-cache" }],
@@ -186,6 +188,19 @@ database.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_logs_work_date ON logs(work_date);
 
+  INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', '1');
+  INSERT OR IGNORE INTO metadata(key, value) VALUES ('revision', '0');
+  INSERT OR IGNORE INTO metadata(key, value) VALUES ('legacy_migration_completed', '0');
+`);
+
+// Schema v11 folded notes and the review/report tables into daily_reviews and period_records.
+// The steps below that only create those retired tables run solely on databases older than v11,
+// so the v11 migration can read them once and drop them for good.
+const legacyReviewSchema = Number(
+  database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value,
+) < 11;
+
+if (legacyReviewSchema) database.exec(`
   CREATE TABLE IF NOT EXISTS notes (
     work_date TEXT PRIMARY KEY,
     content TEXT NOT NULL,
@@ -200,15 +215,11 @@ database.exec(`
     completed_at TEXT,
     updated_at TEXT NOT NULL
   ) STRICT;
-
-  INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', '1');
-  INSERT OR IGNORE INTO metadata(key, value) VALUES ('revision', '0');
-  INSERT OR IGNORE INTO metadata(key, value) VALUES ('legacy_migration_completed', '0');
 `);
 
 database.exec("BEGIN IMMEDIATE");
 try {
-  database.exec(`
+  if (legacyReviewSchema) database.exec(`
     CREATE TABLE IF NOT EXISTS period_reviews (
       period_type TEXT NOT NULL CHECK (period_type IN ('week', 'month', 'quarter', 'year')),
       period_start TEXT NOT NULL,
@@ -219,7 +230,8 @@ try {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (period_type, period_start)
     ) STRICT;
-
+  `);
+  database.exec(`
     UPDATE metadata SET value = '2' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 2;
   `);
   database.exec("COMMIT");
@@ -332,7 +344,7 @@ try {
 
 database.exec("BEGIN IMMEDIATE");
 try {
-  database.exec(`
+  if (legacyReviewSchema) database.exec(`
     CREATE TABLE IF NOT EXISTS project_reviews (
       work_date TEXT NOT NULL,
       project TEXT NOT NULL CHECK (length(trim(project)) BETWEEN 1 AND 80),
@@ -355,7 +367,8 @@ try {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (period_type, period_start, project)
     ) STRICT;
-
+  `);
+  database.exec(`
     UPDATE metadata SET value = '6' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 6;
   `);
   database.exec("COMMIT");
@@ -367,7 +380,7 @@ try {
 
 database.exec("BEGIN IMMEDIATE");
 try {
-  database.exec(`
+  if (legacyReviewSchema) database.exec(`
     CREATE TABLE IF NOT EXISTS period_reports (
       period_type TEXT NOT NULL CHECK (period_type IN ('week', 'month', 'quarter', 'year')),
       period_start TEXT NOT NULL,
@@ -384,7 +397,8 @@ try {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (period_type, period_start, project)
     ) STRICT;
-
+  `);
+  database.exec(`
     UPDATE metadata SET value = '7' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 7;
   `);
   database.exec("COMMIT");
@@ -529,6 +543,194 @@ try {
   throw error;
 }
 
+// Before v11 a day had a note plus a three-part review (wins / blockers / next), and a period had a
+// three-part review and a separate report, each split again into an all-projects and a per-project
+// table. Now a day keeps one review text, and a period keeps one row per project ('' = all projects)
+// holding the report and free-form notes. Old text is folded in under labels so nothing is lost.
+function foldLegacyText(parts) {
+  const filled = parts.map(([label, text]) => [label, typeof text === "string" ? text.trim() : ""]).filter(([, text]) => text);
+  if (filled.length <= 1) return filled[0]?.[1] ?? "";
+  return filled.map(([label, text]) => `【${label}】\n${text}`).join("\n\n");
+}
+
+function upgradeLegacyReviews(legacy) {
+  const dates = new Set([...Object.keys(legacy.notes ?? {}), ...Object.keys(legacy.reviews ?? {})]);
+  const reviews = {};
+  for (const date of dates) {
+    const review = legacy.reviews?.[date] ?? {};
+    const content = typeof review.content === "string"
+      ? review.content
+      : foldLegacyText([["成果", review.wins], ["问题", review.blockers], ["明天", review.next], ["笔记", legacy.notes?.[date]]]);
+    if (content.trim()) reviews[date] = { content };
+  }
+  const periodReviews = {};
+  const put = (key, project, field, value) => {
+    if (!value?.trim()) return;
+    periodReviews[key] ??= {};
+    periodReviews[key][project] ??= { report: "", notes: "" };
+    periodReviews[key][project][field] = value;
+  };
+  const reviewNotes = (review) => foldLegacyText([["成果", review?.wins], ["问题", review?.blockers], ["下一步", review?.next]]);
+  for (const [key, review] of Object.entries(legacy.periodReviews ?? {})) put(key, "", "notes", reviewNotes(review));
+  for (const [key, projects] of Object.entries(legacy.projectPeriodReviews ?? {})) {
+    for (const [project, review] of Object.entries(projects ?? {})) put(key, project, "notes", reviewNotes(review));
+  }
+  for (const [key, report] of Object.entries(legacy.periodReports ?? {})) put(key, "", "report", report?.content);
+  for (const [key, projects] of Object.entries(legacy.projectPeriodReports ?? {})) {
+    for (const [project, report] of Object.entries(projects ?? {})) put(key, project, "report", report?.content);
+  }
+  return { reviews, periodReviews };
+}
+
+function readLegacyReviewTables() {
+  const all = (sql) => database.prepare(sql).all();
+  const legacyReview = (row) => ({ wins: row.wins, blockers: row.blockers, next: row.next_actions });
+  const nest = (rows, value) => {
+    const grouped = {};
+    for (const row of rows) {
+      const key = `${row.period_type}:${row.period_start}`;
+      grouped[key] ??= {};
+      grouped[key][row.project] = value(row);
+    }
+    return grouped;
+  };
+  return {
+    notes: Object.fromEntries(all("SELECT work_date, content FROM notes").map((row) => [row.work_date, row.content])),
+    reviews: Object.fromEntries(all("SELECT * FROM reviews").map((row) => [row.work_date, legacyReview(row)])),
+    periodReviews: Object.fromEntries(all("SELECT * FROM period_reviews").map((row) => [`${row.period_type}:${row.period_start}`, legacyReview(row)])),
+    projectPeriodReviews: nest(all("SELECT * FROM project_period_reviews"), legacyReview),
+    periodReports: Object.fromEntries(all("SELECT * FROM period_reports").map((row) => [`${row.period_type}:${row.period_start}`, { content: row.content }])),
+    projectPeriodReports: nest(all("SELECT * FROM project_period_reports"), (row) => ({ content: row.content })),
+  };
+}
+
+database.exec("BEGIN IMMEDIATE");
+try {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS daily_reviews (
+      work_date TEXT PRIMARY KEY,
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS period_records (
+      period_type TEXT NOT NULL CHECK (period_type IN ('day', 'week', 'month', 'quarter', 'year', 'range')),
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL DEFAULT '' CHECK ((period_type = 'range') = (period_end <> '')),
+      project TEXT NOT NULL DEFAULT '' CHECK (length(project) <= 80),
+      report TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (period_type, period_start, period_end, project)
+    ) STRICT;
+  `);
+  if (legacyReviewSchema) {
+    const { reviews, periodReviews } = upgradeLegacyReviews(readLegacyReviewTables());
+    const now = new Date().toISOString();
+    const insertDaily = database.prepare("INSERT INTO daily_reviews(work_date, content, updated_at) VALUES (?, ?, ?)");
+    const insertPeriod = database.prepare(`
+      INSERT INTO period_records(period_type, period_start, period_end, project, report, notes, updated_at)
+      VALUES (?, ?, '', ?, ?, ?, ?)
+    `);
+    for (const [date, review] of Object.entries(reviews)) insertDaily.run(date, review.content, now);
+    for (const [key, projects] of Object.entries(periodReviews)) {
+      const [periodType, periodStart] = key.split(":");
+      for (const [project, record] of Object.entries(projects)) {
+        insertPeriod.run(periodType, periodStart, project, record.report, record.notes, now);
+      }
+    }
+    database.exec(`
+      DROP TABLE notes;
+      DROP TABLE reviews;
+      DROP TABLE period_reviews;
+      DROP TABLE project_reviews;
+      DROP TABLE project_period_reviews;
+      DROP TABLE period_reports;
+      DROP TABLE project_period_reports;
+    `);
+  }
+  database.exec("UPDATE metadata SET value = '11' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 11");
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
+// v12: a task can be one of the day's focus items and belong to a weekly goal; tokens gain the
+// write-only 'capture' scope, which needs the scope CHECK widened (SQLite cannot alter a CHECK in place).
+database.exec("BEGIN IMMEDIATE");
+try {
+  const taskColumns = new Set(database.prepare("PRAGMA table_info(tasks)").all().map((column) => column.name));
+  if (!taskColumns.has("focus")) database.exec("ALTER TABLE tasks ADD COLUMN focus INTEGER NOT NULL DEFAULT 0 CHECK (focus IN (0, 1))");
+  // Not a foreign key: deleting a goal leaves its tasks alone and the client clears the link.
+  if (!taskColumns.has("goal_id")) database.exec("ALTER TABLE tasks ADD COLUMN goal_id TEXT");
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS goals (
+      id TEXT PRIMARY KEY,
+      week_start TEXT NOT NULL,
+      title TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+      created_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS idx_goals_week_start ON goals(week_start);
+  `);
+  const tokenTableSql = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_tokens'").get().sql;
+  if (!tokenTableSql.includes("'capture'")) {
+    database.exec(`
+      CREATE TABLE agent_tokens_v12 (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        token_prefix TEXT NOT NULL,
+        builtin INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1)),
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        revoked_at TEXT,
+        scope TEXT NOT NULL DEFAULT 'ingest' CHECK (scope IN ('ingest', 'read', 'capture'))
+      ) STRICT;
+      INSERT INTO agent_tokens_v12(id, name, token_hash, token_prefix, builtin, created_at, last_used_at, revoked_at, scope)
+        SELECT id, name, token_hash, token_prefix, builtin, created_at, last_used_at, revoked_at, scope FROM agent_tokens;
+      DROP TABLE agent_tokens;
+      ALTER TABLE agent_tokens_v12 RENAME TO agent_tokens;
+    `);
+  }
+  database.exec("UPDATE metadata SET value = '12' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 12");
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
+// v13: period summaries gain a 'day' period, which needs the period_type CHECK widened by rebuilding the table.
+database.exec("BEGIN IMMEDIATE");
+try {
+  const periodTableSql = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'period_records'").get().sql;
+  if (!periodTableSql.includes("'day'")) {
+    database.exec(`
+      CREATE TABLE period_records_v13 (
+        period_type TEXT NOT NULL CHECK (period_type IN ('day', 'week', 'month', 'quarter', 'year', 'range')),
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL DEFAULT '' CHECK ((period_type = 'range') = (period_end <> '')),
+        project TEXT NOT NULL DEFAULT '' CHECK (length(project) <= 80),
+        report TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (period_type, period_start, period_end, project)
+      ) STRICT;
+      INSERT INTO period_records_v13(period_type, period_start, period_end, project, report, notes, updated_at)
+        SELECT period_type, period_start, period_end, project, report, notes, updated_at FROM period_records;
+      DROP TABLE period_records;
+      ALTER TABLE period_records_v13 RENAME TO period_records;
+    `);
+  }
+  database.exec("UPDATE metadata SET value = '13' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 13");
+  database.exec("COMMIT");
+} catch (error) {
+  if (database.isTransaction) database.exec("ROLLBACK");
+  throw error;
+}
+
 const statements = {
   getRevision: database.prepare("SELECT value FROM metadata WHERE key = 'revision'"),
   setRevision: database.prepare("UPDATE metadata SET value = ? WHERE key = 'revision'"),
@@ -537,16 +739,13 @@ const statements = {
       (SELECT COUNT(*) FROM tasks) +
       (SELECT COUNT(*) FROM task_recurrences) +
       (SELECT COUNT(*) FROM logs) +
-      (SELECT COUNT(*) FROM notes) +
-      (SELECT COUNT(*) FROM reviews) +
-      (SELECT COUNT(*) FROM period_reviews) +
-      (SELECT COUNT(*) FROM project_period_reviews) +
-      (SELECT COUNT(*) FROM period_reports) +
-      (SELECT COUNT(*) FROM project_period_reports) AS count
+      (SELECT COUNT(*) FROM goals) +
+      (SELECT COUNT(*) FROM daily_reviews) +
+      (SELECT COUNT(*) FROM period_records) AS count
   `),
   readTasks: database.prepare(`
     SELECT id, work_date, title, project, priority, completed, created_at, completed_at,
-      origin_date, due_date, due_time, remind_minutes, recurrence_id
+      origin_date, due_date, due_time, remind_minutes, recurrence_id, focus, goal_id
     FROM tasks ORDER BY created_at ASC
   `),
   readRecurrences: database.prepare(`
@@ -573,7 +772,7 @@ const statements = {
     VALUES (?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?, ?, ?)
   `),
   rollOverTasks: database.prepare(`
-    UPDATE tasks SET origin_date = coalesce(origin_date, work_date), work_date = ?
+    UPDATE tasks SET origin_date = coalesce(origin_date, work_date), work_date = ?, focus = 0
     WHERE completed = 0 AND work_date < ? AND recurrence_id IS NULL
   `),
   readMetadata: database.prepare("SELECT value FROM metadata WHERE key = ?"),
@@ -584,72 +783,44 @@ const statements = {
     SELECT id, work_date, title, project, source_task_id, source, created_at
     FROM logs ORDER BY created_at ASC
   `),
-  readNotes: database.prepare("SELECT work_date, content FROM notes ORDER BY work_date ASC"),
-  readReviews: database.prepare(`
-    SELECT work_date, wins, blockers, next_actions, completed_at
-    FROM reviews ORDER BY work_date ASC
-  `),
-  readPeriodReviews: database.prepare(`
-    SELECT period_type, period_start, wins, blockers, next_actions, completed_at
-    FROM period_reviews ORDER BY period_start ASC, period_type ASC
-  `),
-  readProjectPeriodReviews: database.prepare(`
-    SELECT period_type, period_start, project, wins, blockers, next_actions, completed_at
-    FROM project_period_reviews ORDER BY period_start ASC, period_type ASC, project ASC
+  readDailyReviews: database.prepare("SELECT work_date, content FROM daily_reviews ORDER BY work_date ASC"),
+  readPeriodRecords: database.prepare(`
+    SELECT period_type, period_start, period_end, project, report, notes
+    FROM period_records ORDER BY period_start ASC, period_type ASC, period_end ASC, project ASC
   `),
   insertTask: database.prepare(`
     INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at,
-      origin_date, due_date, due_time, remind_minutes, recurrence_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      origin_date, due_date, due_time, remind_minutes, recurrence_id, focus, goal_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
+  readGoals: database.prepare("SELECT id, week_start, title, done, created_at FROM goals ORDER BY week_start ASC, created_at ASC"),
+  insertGoal: database.prepare("INSERT INTO goals(id, week_start, title, done, created_at) VALUES (?, ?, ?, ?, ?)"),
+  upsertGoal: database.prepare(`
+    INSERT INTO goals(id, week_start, title, done, created_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET week_start = excluded.week_start, title = excluded.title, done = excluded.done,
+      created_at = excluded.created_at
+  `),
+  deleteGoal: database.prepare("DELETE FROM goals WHERE id = ?"),
+  countWeekGoals: database.prepare("SELECT COUNT(*) AS count FROM goals WHERE week_start = ?"),
   insertLog: database.prepare(`
     INSERT INTO logs(id, work_date, title, project, source_task_id, created_at, source)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
-  insertNote: database.prepare(`
-    INSERT INTO notes(work_date, content, updated_at) VALUES (?, ?, ?)
-  `),
-  insertReview: database.prepare(`
-    INSERT INTO reviews(work_date, wins, blockers, next_actions, completed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `),
-  insertPeriodReview: database.prepare(`
-    INSERT INTO period_reviews(
-      period_type, period_start, wins, blockers, next_actions, completed_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `),
-  insertProjectPeriodReview: database.prepare(`
-    INSERT INTO project_period_reviews(
-      period_type, period_start, project, wins, blockers, next_actions, completed_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `),
-
-  readPeriodReports: database.prepare(`
-    SELECT period_type, period_start, content, updated_at
-    FROM period_reports ORDER BY period_start ASC, period_type ASC
-  `),
-  readProjectPeriodReports: database.prepare(`
-    SELECT period_type, period_start, project, content, updated_at
-    FROM project_period_reports ORDER BY period_start ASC, period_type ASC, project ASC
-  `),
-  insertPeriodReport: database.prepare(`
-    INSERT INTO period_reports(period_type, period_start, content, updated_at)
-    VALUES (?, ?, ?, ?)
-  `),
-  insertProjectPeriodReport: database.prepare(`
-    INSERT INTO project_period_reports(period_type, period_start, project, content, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+  insertDailyReview: database.prepare("INSERT INTO daily_reviews(work_date, content, updated_at) VALUES (?, ?, ?)"),
+  insertPeriodRecord: database.prepare(`
+    INSERT INTO period_records(period_type, period_start, period_end, project, report, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
   taskExists: database.prepare("SELECT 1 AS found FROM tasks WHERE id = ?"),
   upsertTask: database.prepare(`
     INSERT INTO tasks(id, work_date, title, project, priority, completed, created_at, completed_at,
-      origin_date, due_date, due_time, remind_minutes, recurrence_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      origin_date, due_date, due_time, remind_minutes, recurrence_id, focus, goal_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date, title = excluded.title,
       project = excluded.project, priority = excluded.priority, completed = excluded.completed,
       created_at = excluded.created_at, completed_at = excluded.completed_at, origin_date = excluded.origin_date,
       due_date = excluded.due_date, due_time = excluded.due_time, remind_minutes = excluded.remind_minutes,
-      recurrence_id = excluded.recurrence_id
+      recurrence_id = excluded.recurrence_id, focus = excluded.focus, goal_id = excluded.goal_id
   `),
   deleteTask: database.prepare("DELETE FROM tasks WHERE id = ?"),
   upsertLog: database.prepare(`
@@ -661,47 +832,19 @@ const statements = {
   `),
   readLogSource: database.prepare("SELECT source FROM logs WHERE id = ?"),
   deleteLog: database.prepare("DELETE FROM logs WHERE id = ?"),
-  upsertNote: database.prepare(`
-    INSERT INTO notes(work_date, content, updated_at) VALUES (?, ?, ?)
+  upsertDailyReview: database.prepare(`
+    INSERT INTO daily_reviews(work_date, content, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(work_date) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
   `),
-  deleteNote: database.prepare("DELETE FROM notes WHERE work_date = ?"),
-  upsertReview: database.prepare(`
-    INSERT INTO reviews(work_date, wins, blockers, next_actions, completed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(work_date) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
-      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
-  `),
-  deleteReview: database.prepare("DELETE FROM reviews WHERE work_date = ?"),
-  upsertPeriodReview: database.prepare(`
-    INSERT INTO period_reviews(period_type, period_start, wins, blockers, next_actions, completed_at, updated_at)
+  deleteDailyReview: database.prepare("DELETE FROM daily_reviews WHERE work_date = ?"),
+  upsertPeriodRecord: database.prepare(`
+    INSERT INTO period_records(period_type, period_start, period_end, project, report, notes, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(period_type, period_start) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
-      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
+    ON CONFLICT(period_type, period_start, period_end, project) DO UPDATE SET report = excluded.report,
+      notes = excluded.notes, updated_at = excluded.updated_at
   `),
-  deletePeriodReview: database.prepare("DELETE FROM period_reviews WHERE period_type = ? AND period_start = ?"),
-  upsertProjectPeriodReview: database.prepare(`
-    INSERT INTO project_period_reviews(
-      period_type, period_start, project, wins, blockers, next_actions, completed_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(period_type, period_start, project) DO UPDATE SET wins = excluded.wins, blockers = excluded.blockers,
-      next_actions = excluded.next_actions, completed_at = excluded.completed_at, updated_at = excluded.updated_at
-  `),
-  deleteProjectPeriodReview: database.prepare(`
-    DELETE FROM project_period_reviews WHERE period_type = ? AND period_start = ? AND project = ?
-  `),
-  upsertPeriodReport: database.prepare(`
-    INSERT INTO period_reports(period_type, period_start, content, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(period_type, period_start) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
-  `),
-  deletePeriodReport: database.prepare("DELETE FROM period_reports WHERE period_type = ? AND period_start = ?"),
-  upsertProjectPeriodReport: database.prepare(`
-    INSERT INTO project_period_reports(period_type, period_start, project, content, updated_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(period_type, period_start, project) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
-  `),
-  deleteProjectPeriodReport: database.prepare(`
-    DELETE FROM project_period_reports WHERE period_type = ? AND period_start = ? AND project = ?
+  deletePeriodRecord: database.prepare(`
+    DELETE FROM period_records WHERE period_type = ? AND period_start = ? AND period_end = ? AND project = ?
   `),
   readAiProviders: database.prepare(`
     SELECT id, name, protocol, base_url, model, timeout_ms, options_json,
@@ -1366,7 +1509,7 @@ async function testAiProvider(id) {
 function requirePeriodSummaryInput(input) {
   if (!isPlainObject(input)) throw new HttpError(400, "AI_SUMMARY_INVALID", "周期参数必须是对象");
   const periodType = requireString(input.periodType, "periodType", 20).trim();
-  if (!Object.hasOwn({ week: true, month: true, quarter: true, year: true }, periodType)) {
+  if (!Object.hasOwn({ day: true, week: true, month: true, quarter: true, year: true }, periodType)) {
     throw new HttpError(400, "AI_SUMMARY_INVALID", "周期类型无效");
   }
   const periodStart = requireString(input.periodStart, "periodStart", 10).trim();
@@ -1399,19 +1542,12 @@ function buildPeriodSummarySnapshot(periodType, periodStart, project = null) {
   const tasks = data.tasks.filter((task) => task.date >= periodStart && task.date <= periodEnd && matchesProject(task));
   const logs = data.logs.filter((log) => log.date >= periodStart && log.date <= periodEnd && matchesProject(log));
   const manualLogs = logs.filter((log) => !log.sourceTaskId);
-  const periodKey = `${periodType}:${periodStart}`;
-  const authoredReview = project
-    ? data.projectPeriodReviews[periodKey]?.[project] ?? {}
-    : data.periodReviews[periodKey] ?? {};
+  const periodNotes = data.periodReviews[periodKeyOf(periodType, periodStart)]?.[project ?? ""]?.notes ?? "";
   const activeDates = new Set([
     ...tasks.map((task) => task.date),
     ...logs.map((log) => log.date),
-    ...(!project ? Object.entries(data.notes)
-      .filter(([date, content]) => date >= periodStart && date <= periodEnd && content.trim())
-      .map(([date]) => date) : []),
     ...(!project ? Object.entries(data.reviews)
-      .filter(([date, review]) => date >= periodStart && date <= periodEnd
-        && [review.wins, review.blockers, review.next].some((value) => value?.trim()))
+      .filter(([date, review]) => date >= periodStart && date <= periodEnd && review.content.trim())
       .map(([date]) => date) : []),
   ]);
   const projects = new Map();
@@ -1420,9 +1556,8 @@ function buildPeriodSummarySnapshot(periodType, periodStart, project = null) {
     projects.set(project, (projects.get(project) ?? 0) + 1);
   }
   const completedTasks = tasks.filter((task) => task.completed);
-  const hasAuthoredReview = [authoredReview.wins, authoredReview.blockers, authoredReview.next]
-    .some((value) => value?.trim());
-  if (!tasks.length && !manualLogs.length && !hasAuthoredReview) {
+  const goals = goalsForRange(data, periodStart, periodEnd, project);
+  if (!tasks.length && !manualLogs.length && !periodNotes.trim() && !goals.length) {
     throw new HttpError(400, "AI_SUMMARY_EMPTY", "这个周期还没有可供 AI 总结的工作记录");
   }
   const summarizeItem = (item) => ({
@@ -1447,12 +1582,27 @@ function buildPeriodSummarySnapshot(periodType, periodStart, project = null) {
       .slice().sort((a, b) => a.date.localeCompare(b.date)).slice(0, MAX_AI_SUMMARY_ITEMS).map(summarizeItem),
     projects: [...projects.entries()]
       .sort((a, b) => b[1] - a[1]).slice(0, 50).map(([name, count]) => ({ name, count })),
-    currentReview: {
-      wins: authoredReview.wins ?? "",
-      blockers: authoredReview.blockers ?? "",
-      next: authoredReview.next ?? "",
-    },
+    goals,
+    periodNotes,
   };
+}
+
+// Weekly goals whose week starts inside the range, with progress from the tasks linked to them.
+// A project filter keeps only goals that have at least one linked task in that project.
+function goalsForRange(data, from, to, project = null) {
+  return data.goals
+    .filter((goal) => goal.week >= periodStartOf("week", from) && goal.week <= to)
+    .map((goal) => {
+      const linked = data.tasks.filter((task) => task.goalId === goal.id && (!project || task.project === project));
+      return {
+        week: goal.week,
+        title: goal.title,
+        done: goal.done,
+        linkedTasks: { completed: linked.filter((task) => task.completed).length, total: linked.length },
+        ...(linked.length ? { tasks: linked.slice(0, 20).map((task) => ({ title: task.title, completed: task.completed })) } : {}),
+      };
+    })
+    .filter((goal) => !project || goal.linkedTasks.total > 0);
 }
 
 function aiOutputTruncated(protocol, result) {
@@ -1489,7 +1639,7 @@ function periodReportPrompt(snapshot, promptExcerpt) {
     `用户的总结偏好：${promptExcerpt}`,
     "请根据下面的工作周期数据，生成一份可直接提交的中文工作汇报。",
     "要求：客观、真实、简洁明了；可以稍加修饰，但不要空话套话、不要夸张措辞、不要明显的 AI 腔。",
-    "结构建议：先用一两句话概述本周期情况（可包含完成事项数、活跃天数、项目分布等量化数据）；再分条列出主要成果（只能基于给定记录归纳，不得虚构）；然后写下一周期的计划；如有风险或需要的支持可单列。",
+    "结构建议：先用一两句话概述本周期情况（可包含完成事项数、活跃天数、项目分布等量化数据）；如果数据里有 goals（每周目标），接着逐条对照目标说明完成情况（依据 done 和关联待办的进度，未完成的如实写明）；再分条列出主要成果（只能基于给定记录归纳，不得虚构）；然后写下一周期的计划；如有风险或需要的支持可单列。",
     "不要虚构未提供的事实；不要使用‘赋能’‘抓手’‘很高兴’等套话；直接陈述做了什么、结果如何。",
     `周期数据：${JSON.stringify(snapshot)}`,
   ].join("\n");
@@ -1578,6 +1728,11 @@ async function runPeriodAiTask({ periodType, periodStart, project, systemPrompt,
 }
 
 async function generatePeriodAiReport(input) {
+  // A custom range (up to a year) is written as an achievement summary rather than a weekly-style report.
+  if (isPlainObject(input) && input.periodType === "range") {
+    const { document, ...meta } = await generateAchievementDoc(input);
+    return { report: document, ...meta };
+  }
   const { periodType, periodStart, project } = requirePeriodSummaryInput(input);
   return runPeriodAiTask({
     periodType,
@@ -1607,7 +1762,7 @@ function requireAchievementInput(input) {
     throw invalid("日期无效");
   }
   if (from > to) throw invalid("开始日期不能晚于结束日期");
-  if ((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1 > MAX_ACHIEVEMENT_RANGE_DAYS) {
+  if (rangeSpanDays(from, to) > MAX_ACHIEVEMENT_RANGE_DAYS) {
     throw invalid("时间范围最长一年");
   }
   const project = typeof input.project === "string" && input.project.trim() ? input.project.trim().slice(0, 80) : null;
@@ -1658,16 +1813,14 @@ function buildAchievementSnapshot({ from, to, project }) {
   ].sort((a, b) => a.date.localeCompare(b.date));
   if (!all.length) throw new HttpError(400, "AI_ACHIEVEMENTS_EMPTY", "这段时间还没有可以总结的成果");
   const { items, omitted } = sampleAcrossMonths(all, MAX_ACHIEVEMENT_ITEMS);
+  // Earlier saved reports of shorter periods inside the range give the model extra context.
   const reports = [];
-  const collectReports = (map, scoped) => {
-    for (const [key, value] of Object.entries(map)) {
-      const [, start] = key.split(":");
-      const report = scoped ? value[project] : value;
-      if (start >= from && start <= to && report?.content?.trim()) reports.push({ period: key, content: report.content.trim().slice(0, 1500) });
-    }
-  };
-  if (project) collectReports(data.projectPeriodReports, true);
-  else collectReports(data.periodReports, false);
+  for (const [key, projects] of Object.entries(data.periodReviews)) {
+    if (key.startsWith("range:")) continue;
+    const { start } = periodBounds(key);
+    const report = projects[project ?? ""]?.report?.trim();
+    if (start >= from && start <= to && report) reports.push({ period: key, content: report.slice(0, 1500) });
+  }
   const time = project ? null : readAgentTime(from, to);
   const projects = new Map();
   for (const item of all) projects.set(item.project || "未分类", (projects.get(item.project || "未分类") ?? 0) + 1);
@@ -1683,6 +1836,7 @@ function buildAchievementSnapshot({ from, to, project }) {
     ...(time ? { timeByDirectoryHours: time.byProject.slice(0, 15).map((entry) => ({ directory: entry.project, hours: Math.round(entry.minutes / 6) / 10 })) } : {}),
     achievements: items.map((item) => ({ ...item, title: item.title.slice(0, MAX_ACHIEVEMENT_TITLE_CHARS) })),
     omittedAchievements: omitted,
+    goals: goalsForRange(data, from, to, project).slice(0, 60),
     periodReports: reports.sort((a, b) => a.period.localeCompare(b.period)).slice(-MAX_ACHIEVEMENT_REPORTS),
   };
 }
@@ -1712,7 +1866,7 @@ async function generateAchievementDoc(input) {
       "请输出一份中文 Markdown 成就总结，结构如下：",
       "1. 「概述」：两三句话说明这段时间的整体情况，引用数据中的量化指标（成果数、活跃天数、AI 协作时长等）。",
       "2. 「主要成就」：按主题或项目分成 3 到 6 组，每组列出最有代表性的成就；每条写清做了什么、结果如何，能引用时间点或数量时引用。合并重复和琐碎的条目。",
-      "3. 「能力与成长」：从成就中归纳出体现的能力，每条都要能对应到具体成就。",
+      "3. 「能力与成长」：从成就中归纳出体现的能力，每条都要能对应到具体成就。如果数据里有 goals（每周目标），可以概括目标的达成情况。",
       "4. 「待改进与下一阶段」：基于数据中反复出现但未完成或进展缓慢的事项，审慎提出。",
       "不要使用“赋能”“抓手”“闭环”等空话，不要夸张措辞。",
       `数据：${JSON.stringify(buildAchievementSnapshot(range))}`,
@@ -1805,36 +1959,6 @@ function hasDatabaseData() {
   return statements.countData.get().count > 0;
 }
 
-function groupProjectReviewRows(rows, keyFromRow) {
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = keyFromRow(row);
-    if (!grouped.has(key)) grouped.set(key, new Map());
-    grouped.get(key).set(row.project, {
-      wins: row.wins,
-      blockers: row.blockers,
-      next: row.next_actions,
-      completedAt: row.completed_at,
-    });
-  }
-  return Object.fromEntries(
-    [...grouped].map(([key, projects]) => [key, Object.fromEntries(projects)]),
-  );
-}
-
-
-function groupProjectReportRows(rows, keyFromRow) {
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = keyFromRow(row);
-    if (!grouped.has(key)) grouped.set(key, new Map());
-    grouped.get(key).set(row.project, { content: row.content, updatedAt: row.updated_at });
-  }
-  return Object.fromEntries(
-    [...grouped].map(([key, projects]) => [key, Object.fromEntries(projects)]),
-  );
-}
-
 function readState() {
   const tasks = statements.readTasks.all().map((row) => ({
     id: row.id,
@@ -1850,6 +1974,16 @@ function readState() {
     dueTime: row.due_time,
     remindMinutes: row.remind_minutes,
     recurrenceId: row.recurrence_id,
+    focus: Boolean(row.focus),
+    goalId: row.goal_id,
+  }));
+
+  const goals = statements.readGoals.all().map((row) => ({
+    id: row.id,
+    week: row.week_start,
+    title: row.title,
+    done: Boolean(row.done),
+    createdAt: row.created_at,
   }));
 
   const recurrences = statements.readRecurrences.all().map((row) => ({
@@ -1878,54 +2012,18 @@ function readState() {
     createdAt: row.created_at,
   }));
 
-  const notes = Object.fromEntries(
-    statements.readNotes.all().map((row) => [row.work_date, row.content]),
-  );
-
   const reviews = Object.fromEntries(
-    statements.readReviews.all().map((row) => [
-      row.work_date,
-      {
-        wins: row.wins,
-        blockers: row.blockers,
-        next: row.next_actions,
-        completedAt: row.completed_at,
-      },
-    ]),
+    statements.readDailyReviews.all().map((row) => [row.work_date, { content: row.content }]),
   );
 
-  const periodReviews = Object.fromEntries(
-    statements.readPeriodReviews.all().map((row) => [
-      `${row.period_type}:${row.period_start}`,
-      {
-        wins: row.wins,
-        blockers: row.blockers,
-        next: row.next_actions,
-        completedAt: row.completed_at,
-      },
-    ]),
-  );
+  const periodReviews = {};
+  for (const row of statements.readPeriodRecords.all()) {
+    const key = periodKeyOf(row.period_type, row.period_start, row.period_end);
+    periodReviews[key] ??= {};
+    periodReviews[key][row.project] = { report: row.report, notes: row.notes };
+  }
 
-  const projectPeriodReviews = groupProjectReviewRows(
-    statements.readProjectPeriodReviews.all(),
-    (row) => `${row.period_type}:${row.period_start}`,
-  );
-
-  const periodReports = Object.fromEntries(
-    statements.readPeriodReports.all().map((row) => [
-      `${row.period_type}:${row.period_start}`,
-      { content: row.content, updatedAt: row.updated_at },
-    ]),
-  );
-
-  const projectPeriodReports = groupProjectReportRows(
-    statements.readProjectPeriodReports.all(),
-    (row) => `${row.period_type}:${row.period_start}`,
-  );
-
-  return {
-    tasks, recurrences, logs, notes, reviews, periodReviews, projectPeriodReviews, periodReports, projectPeriodReports,
-  };
+  return { tasks, recurrences, logs, goals, reviews, periodReviews };
 }
 
 function stateResponse() {
@@ -1983,7 +2081,9 @@ function validatePeriodStart(periodType, periodStart, field) {
   const date = new Date(`${periodStart}T00:00:00Z`);
   const month = date.getUTCMonth();
   const day = date.getUTCDate();
-  const valid = periodType === "week"
+  const valid = periodType === "day"
+    ? true
+    : periodType === "week"
     ? date.getUTCDay() === 1
     : periodType === "month"
       ? day === 1
@@ -1994,22 +2094,22 @@ function validatePeriodStart(periodType, periodStart, field) {
   return periodStart;
 }
 
-function validateReviewValue(review, field, maxLength) {
+function validateReviewValue(review, field) {
   if (!isPlainObject(review)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  return { content: requireString(review.content ?? "", `${field}.content`, MAX_DAILY_REVIEW_LENGTH, { allowEmpty: true }) };
+}
+
+function validatePeriodRecordValue(record, field) {
+  if (!isPlainObject(record)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
   return {
-    wins: requireString(review.wins ?? "", `${field}.wins`, maxLength, { allowEmpty: true }),
-    blockers: requireString(review.blockers ?? "", `${field}.blockers`, maxLength, { allowEmpty: true }),
-    next: requireString(review.next ?? "", `${field}.next`, maxLength, { allowEmpty: true }),
-    completedAt: requireTimestamp(review.completedAt, `${field}.completedAt`, { nullable: true }),
+    report: requireString(record.report ?? "", `${field}.report`, MAX_REPORT_CONTENT_LENGTH, { allowEmpty: true }),
+    notes: requireString(record.notes ?? "", `${field}.notes`, MAX_PERIOD_NOTES_LENGTH, { allowEmpty: true }),
   };
 }
 
-function validateReportValue(report, field) {
-  if (!isPlainObject(report)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
-  return {
-    content: requireString(report.content ?? "", `${field}.content`, MAX_REPORT_CONTENT_LENGTH, { allowEmpty: true }),
-    updatedAt: requireTimestamp(report.updatedAt, `${field}.updatedAt`, { nullable: true }),
-  };
+function requirePeriodProject(project, field) {
+  // '' is the all-projects slot.
+  return project === "" ? "" : requireString(project, field, 80);
 }
 
 function validateTaskValue(task, field) {
@@ -2035,6 +2135,26 @@ function validateTaskValue(task, field) {
     dueTime: requireClockTime(task.dueTime, `${field}.dueTime`),
     remindMinutes: requireRemindMinutes(task.remindMinutes, `${field}.remindMinutes`),
     recurrenceId: requireString(task.recurrenceId ?? null, `${field}.recurrenceId`, 128, { nullable: true }),
+    focus: task.focus === undefined ? false : requireBoolean(task.focus, `${field}.focus`),
+    goalId: requireString(task.goalId ?? null, `${field}.goalId`, 128, { nullable: true }),
+  };
+}
+
+function requireBoolean(value, field) {
+  if (typeof value !== "boolean") throw new HttpError(400, "INVALID_STATE", `${field} 必须是布尔值`);
+  return value;
+}
+
+const MAX_GOALS_PER_WEEK = 5;
+
+function validateGoalValue(goal, field) {
+  if (!isPlainObject(goal)) throw new HttpError(400, "INVALID_STATE", `${field} 无效`);
+  return {
+    id: requireString(goal.id, `${field}.id`, 128),
+    week: validatePeriodStart("week", requireDate(goal.week, `${field}.week`), `${field}.week`),
+    title: requireString(goal.title, `${field}.title`, 120),
+    done: requireBoolean(goal.done ?? false, `${field}.done`),
+    createdAt: requireTimestamp(goal.createdAt, `${field}.createdAt`),
   };
 }
 
@@ -2092,8 +2212,12 @@ function validateRecurrenceValue(recurrence, field) {
 function taskRowParams(task) {
   return [
     task.id, task.date, task.title, task.project, task.priority, task.completed ? 1 : 0, task.createdAt, task.completedAt,
-    task.originDate, task.dueDate, task.dueTime, task.remindMinutes, task.recurrenceId,
+    task.originDate, task.dueDate, task.dueTime, task.remindMinutes, task.recurrenceId, task.focus ? 1 : 0, task.goalId,
   ];
+}
+
+function goalRowParams(goal) {
+  return [goal.id, goal.week, goal.title, goal.done ? 1 : 0, goal.createdAt];
 }
 
 function recurrenceRowParams(recurrence) {
@@ -2133,6 +2257,10 @@ function prepareTasksForDay(input) {
       throw new HttpError(400, "INVALID_TASK_DAY", "date 必须是 YYYY-MM-DD");
     }
   })();
+  // Remember the browser's time zone so quick capture can work out "today" the way the user sees it.
+  if (isValidTimeZone(input.timeZone) && statements.readMetadata.get("client_timezone")?.value !== input.timeZone) {
+    statements.writeMetadata.run("client_timezone", input.timeZone);
+  }
   database.exec("BEGIN IMMEDIATE");
   try {
     let rolled = 0;
@@ -2189,7 +2317,7 @@ function validateLogValue(log, field) {
   };
 }
 
-function validateProjectPeriodReviewMap(input, field, { maxEntries = 100000 } = {}) {
+function validatePeriodReviewMap(input, field, { maxEntries = 100000 } = {}) {
   if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", `${field} 必须是有效对象`);
   const groups = [];
   let entryCount = 0;
@@ -2197,9 +2325,9 @@ function validateProjectPeriodReviewMap(input, field, { maxEntries = 100000 } = 
     requirePeriodKey(key, `${field}.${key}`);
     if (!isPlainObject(projectValues)) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 必须是项目对象`);
     const projects = [];
-    for (const [project, review] of Object.entries(projectValues)) {
-      requireString(project, `${field}.${key} 项目`, 80);
-      projects.push([project, validateReviewValue(review, `${field}.${key}.${project}`, 4000)]);
+    for (const [project, record] of Object.entries(projectValues)) {
+      requirePeriodProject(project, `${field}.${key} 项目`);
+      projects.push([project, validatePeriodRecordValue(record, `${field}.${key}.${project}`)]);
       entryCount += 1;
       if (entryCount > maxEntries) throw new HttpError(400, "INVALID_STATE", `${field} 条目过多`);
     }
@@ -2208,35 +2336,35 @@ function validateProjectPeriodReviewMap(input, field, { maxEntries = 100000 } = 
   return Object.fromEntries(groups);
 }
 
-function validateProjectReportMap(input, field, { maxEntries = 100000 } = {}) {
-  if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", `${field} 必须是有效对象`);
-  const groups = [];
-  let entryCount = 0;
-  for (const [key, projectValues] of Object.entries(input)) {
-    const match = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key);
-    if (!match) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 的键无效`);
-    validatePeriodStart(match[1], match[2], `${field}.${key} 起始日`);
-    if (!isPlainObject(projectValues)) throw new HttpError(400, "INVALID_STATE", `${field}.${key} 必须是项目对象`);
-    const projects = [];
-    for (const [project, report] of Object.entries(projectValues)) {
-      requireString(project, `${field}.${key} 项目`, 80);
-      projects.push([project, validateReportValue(report, `${field}.${key}.${project}`)]);
-      entryCount += 1;
-      if (entryCount > maxEntries) throw new HttpError(400, "INVALID_STATE", `${field} 条目过多`);
-    }
-    groups.push([key, Object.fromEntries(projects)]);
-  }
-  return Object.fromEntries(groups);
+// Backups and clients from before schema v11 send notes plus multi-part reviews and reports;
+// they always carry `notes`, which the current shape no longer has.
+function isLegacyState(input) {
+  return ["notes", "projectPeriodReviews", "periodReports", "projectPeriodReports"].some((key) => Object.hasOwn(input, key));
 }
 
-function validateState(input, {
+function upgradeLegacyState(input) {
+  const legacy = {
+    notes: isPlainObject(input.notes) ? input.notes : {},
+    reviews: isPlainObject(input.reviews) ? input.reviews : {},
+    periodReviews: isPlainObject(input.periodReviews) ? input.periodReviews : {},
+    projectPeriodReviews: isPlainObject(input.projectPeriodReviews) ? input.projectPeriodReviews : {},
+    periodReports: isPlainObject(input.periodReports) ? input.periodReports : {},
+    projectPeriodReports: isPlainObject(input.projectPeriodReports) ? input.projectPeriodReports : {},
+  };
+  for (const [name, map] of Object.entries(legacy)) {
+    if (Object.keys(map).length > 36600) throw new HttpError(400, "INVALID_STATE", `${name} 条目过多`);
+  }
+  const { notes, projectPeriodReviews, periodReports, projectPeriodReports, ...rest } = input;
+  return { ...rest, ...upgradeLegacyReviews(legacy) };
+}
+
+function validateState(rawInput, {
   periodReviewsFallback = {},
-  projectPeriodReviewsFallback = {},
-  periodReportsFallback = {},
-  projectPeriodReportsFallback = {},
+  goalsFallback = [],
   logSourcesFallback = new Map(),
 } = {}) {
-  if (!isPlainObject(input)) throw new HttpError(400, "INVALID_STATE", "data 必须是对象");
+  if (!isPlainObject(rawInput)) throw new HttpError(400, "INVALID_STATE", "data 必须是对象");
+  const input = isLegacyState(rawInput) ? upgradeLegacyState(rawInput) : rawInput;
 
   const taskIds = new Set();
   const tasks = requireArray(input.tasks, "tasks", 10000).map((task, index) => {
@@ -2273,69 +2401,34 @@ function validateState(input, {
     return validated;
   });
 
-  if (!isPlainObject(input.notes) || Object.keys(input.notes).length > 36600) {
-    throw new HttpError(400, "INVALID_STATE", "notes 必须是有效对象");
-  }
-  const notes = {};
-  for (const [date, content] of Object.entries(input.notes)) {
-    notes[requireDate(date, "notes 日期")] = requireString(content, `notes.${date}`, 2000, { allowEmpty: true });
-  }
-
   if (!isPlainObject(input.reviews) || Object.keys(input.reviews).length > 36600) {
     throw new HttpError(400, "INVALID_STATE", "reviews 必须是有效对象");
   }
   const reviews = {};
   for (const [date, review] of Object.entries(input.reviews)) {
     requireDate(date, "reviews 日期");
-    reviews[date] = validateReviewValue(review, `reviews.${date}`, 1200);
+    reviews[date] = validateReviewValue(review, `reviews.${date}`);
   }
 
-  const periodReviewInput = input.periodReviews === undefined ? periodReviewsFallback : input.periodReviews;
-  if (!isPlainObject(periodReviewInput) || Object.keys(periodReviewInput).length > 10000) {
-    throw new HttpError(400, "INVALID_STATE", "periodReviews 必须是有效对象");
-  }
-  const periodReviews = {};
-  for (const [key, review] of Object.entries(periodReviewInput)) {
-    const match = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key);
-    if (!match) throw new HttpError(400, "INVALID_STATE", `periodReviews.${key} 的键无效`);
-    const [, periodType, periodStart] = match;
-    validatePeriodStart(periodType, periodStart, `periodReviews.${key} 起始日`);
-    periodReviews[key] = validateReviewValue(review, `periodReviews.${key}`, 4000);
-  }
-
-  const projectPeriodReviews = validateProjectPeriodReviewMap(
-    input.projectPeriodReviews === undefined ? projectPeriodReviewsFallback : input.projectPeriodReviews,
-    "projectPeriodReviews",
+  const periodReviews = validatePeriodReviewMap(
+    input.periodReviews === undefined ? periodReviewsFallback : input.periodReviews,
+    "periodReviews",
   );
 
-  const periodReportsInput = input.periodReports === undefined ? periodReportsFallback : input.periodReports;
-  if (!isPlainObject(periodReportsInput) || Object.keys(periodReportsInput).length > 10000) {
-    throw new HttpError(400, "INVALID_STATE", "periodReports 必须是有效对象");
-  }
-  const periodReports = {};
-  for (const [key, report] of Object.entries(periodReportsInput)) {
-    const match = /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key);
-    if (!match) throw new HttpError(400, "INVALID_STATE", `periodReports.${key} 的键无效`);
-    validatePeriodStart(match[1], match[2], `periodReports.${key} 起始日`);
-    periodReports[key] = validateReportValue(report, `periodReports.${key}`);
-  }
+  const goalIds = new Set();
+  const goalsPerWeek = new Map();
+  const goals = requireArray(input.goals === undefined ? goalsFallback : input.goals, "goals", 5000).map((goal, index) => {
+    const validated = validateGoalValue(goal, `goals[${index}]`);
+    if (goalIds.has(validated.id)) throw new HttpError(400, "INVALID_STATE", `目标 ID 重复：${validated.id}`);
+    goalIds.add(validated.id);
+    goalsPerWeek.set(validated.week, (goalsPerWeek.get(validated.week) ?? 0) + 1);
+    if (goalsPerWeek.get(validated.week) > MAX_GOALS_PER_WEEK) {
+      throw new HttpError(400, "INVALID_STATE", `每周最多 ${MAX_GOALS_PER_WEEK} 个目标`);
+    }
+    return validated;
+  });
 
-  const projectPeriodReports = validateProjectReportMap(
-    input.projectPeriodReports === undefined ? projectPeriodReportsFallback : input.projectPeriodReports,
-    "projectPeriodReports",
-  );
-
-  return {
-    tasks,
-    recurrences,
-    logs,
-    notes,
-    reviews,
-    periodReviews,
-    projectPeriodReviews,
-    periodReports,
-    projectPeriodReports,
-  };
+  return { tasks, recurrences, logs, goals, reviews, periodReviews };
 }
 
 function replaceState(nextState, expectedRevision) {
@@ -2348,12 +2441,9 @@ function replaceState(nextState, expectedRevision) {
       DELETE FROM logs;
       DELETE FROM tasks;
       DELETE FROM task_recurrences;
-      DELETE FROM notes;
-      DELETE FROM reviews;
-      DELETE FROM period_reviews;
-      DELETE FROM project_period_reviews;
-      DELETE FROM period_reports;
-      DELETE FROM project_period_reports;
+      DELETE FROM goals;
+      DELETE FROM daily_reviews;
+      DELETE FROM period_records;
     `);
 
     for (const recurrence of nextState.recurrences) statements.upsertRecurrence.run(...recurrenceRowParams(recurrence));
@@ -2361,48 +2451,15 @@ function replaceState(nextState, expectedRevision) {
     for (const log of nextState.logs) {
       statements.insertLog.run(log.id, log.date, log.title, log.project, log.sourceTaskId, log.createdAt, log.source);
     }
+    for (const goal of nextState.goals) statements.insertGoal.run(...goalRowParams(goal));
     const updatedAt = new Date().toISOString();
-    for (const [date, content] of Object.entries(nextState.notes)) {
-      statements.insertNote.run(date, content, updatedAt);
-    }
     for (const [date, review] of Object.entries(nextState.reviews)) {
-      statements.insertReview.run(date, review.wins, review.blockers, review.next, review.completedAt, updatedAt);
+      statements.insertDailyReview.run(date, review.content, updatedAt);
     }
-    for (const [key, review] of Object.entries(nextState.periodReviews)) {
-      const [periodType, periodStart] = key.split(":");
-      statements.insertPeriodReview.run(
-        periodType,
-        periodStart,
-        review.wins,
-        review.blockers,
-        review.next,
-        review.completedAt,
-        updatedAt,
-      );
-    }
-    for (const [key, projects] of Object.entries(nextState.projectPeriodReviews)) {
-      const [periodType, periodStart] = key.split(":");
-      for (const [project, review] of Object.entries(projects)) {
-        statements.insertProjectPeriodReview.run(
-          periodType,
-          periodStart,
-          project,
-          review.wins,
-          review.blockers,
-          review.next,
-          review.completedAt,
-          updatedAt,
-        );
-      }
-    }
-    for (const [key, report] of Object.entries(nextState.periodReports)) {
-      const [periodType, periodStart] = key.split(":");
-      statements.insertPeriodReport.run(periodType, periodStart, report.content, updatedAt);
-    }
-    for (const [key, projects] of Object.entries(nextState.projectPeriodReports)) {
-      const [periodType, periodStart] = key.split(":");
-      for (const [project, report] of Object.entries(projects)) {
-        statements.insertProjectPeriodReport.run(periodType, periodStart, project, report.content, updatedAt);
+    for (const [key, projects] of Object.entries(nextState.periodReviews)) {
+      const period = requirePeriodKey(key, "periodReviews");
+      for (const [project, record] of Object.entries(projects)) {
+        statements.insertPeriodRecord.run(...period, project, record.report, record.notes, updatedAt);
       }
     }
 
@@ -2420,14 +2477,35 @@ function replaceState(nextState, expectedRevision) {
   }
 }
 
-function requirePeriodKey(key, field) {
-  const match = typeof key === "string" ? /^(week|month|quarter|year):(\d{4}-\d{2}-\d{2})$/.exec(key) : null;
-  if (!match) throw new HttpError(400, "INVALID_STATE", `${field} 的键无效`);
-  validatePeriodStart(match[1], match[2], `${field} 起始日`);
-  return [match[1], match[2]];
+const PERIOD_KEY_PATTERN = /^(?:(day|week|month|quarter|year):(\d{4}-\d{2}-\d{2})|range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2}))$/;
+
+function periodKeyOf(periodType, periodStart, periodEnd = "") {
+  return periodType === "range" ? `range:${periodStart}:${periodEnd}` : `${periodType}:${periodStart}`;
 }
 
-const reviewParams = (review, now) => [review.wins, review.blockers, review.next, review.completedAt, now];
+function rangeSpanDays(from, to) {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
+}
+
+// Returns the composite database key [period_type, period_start, period_end]; period_end is '' unless custom range.
+function requirePeriodKey(key, field) {
+  const match = typeof key === "string" ? PERIOD_KEY_PATTERN.exec(key) : null;
+  if (!match) throw new HttpError(400, "INVALID_STATE", `${field} 的键无效`);
+  if (match[1]) {
+    validatePeriodStart(match[1], match[2], `${field} 起始日`);
+    return [match[1], match[2], ""];
+  }
+  const [from, to] = [requireDate(match[3], `${field} 起始日`), requireDate(match[4], `${field} 结束日`)];
+  if (from > to || rangeSpanDays(from, to) > MAX_ACHIEVEMENT_RANGE_DAYS) {
+    throw new HttpError(400, "INVALID_STATE", `${field} 的时间范围无效（最长一年）`);
+  }
+  return ["range", from, to];
+}
+
+function periodBounds(key) {
+  const [periodType, start, end] = requirePeriodKey(key, "period");
+  return { start, end: end || periodEndKey(periodType, start) };
+}
 
 const PATCH_OPS = {
   "task.put": {
@@ -2460,83 +2538,46 @@ const PATCH_OPS = {
     parse: (op, field) => ({ id: requireString(op.id, `${field}.id`, 128) }),
     run: ({ id }) => statements.deleteLog.run(id),
   },
-  "note.put": {
-    parse: (op, field) => ({
-      date: requireDate(op.date, `${field}.date`),
-      content: requireString(op.content, `${field}.content`, 2000, { allowEmpty: true }),
-    }),
-    run: ({ date, content }, now) => statements.upsertNote.run(date, content, now),
+  "goal.put": {
+    parse: (op, field) => ({ goal: validateGoalValue(op.goal, `${field}.goal`) }),
+    run: ({ goal }) => {
+      statements.upsertGoal.run(...goalRowParams(goal));
+      if (statements.countWeekGoals.get(goal.week).count > MAX_GOALS_PER_WEEK) {
+        throw new HttpError(400, "INVALID_STATE", `每周最多 ${MAX_GOALS_PER_WEEK} 个目标`);
+      }
+    },
   },
-  "note.delete": {
-    parse: (op, field) => ({ date: requireDate(op.date, `${field}.date`) }),
-    run: ({ date }) => statements.deleteNote.run(date),
+  "goal.delete": {
+    parse: (op, field) => ({ id: requireString(op.id, `${field}.id`, 128) }),
+    run: ({ id }) => statements.deleteGoal.run(id),
   },
   "review.put": {
     parse: (op, field) => ({
       date: requireDate(op.date, `${field}.date`),
-      review: validateReviewValue(op.review, `${field}.review`, 1200),
+      review: validateReviewValue(op.review, `${field}.review`),
     }),
-    run: ({ date, review }, now) => statements.upsertReview.run(date, ...reviewParams(review, now)),
+    run: ({ date, review }, now) => statements.upsertDailyReview.run(date, review.content, now),
   },
   "review.delete": {
     parse: (op, field) => ({ date: requireDate(op.date, `${field}.date`) }),
-    run: ({ date }) => statements.deleteReview.run(date),
+    run: ({ date }) => statements.deleteDailyReview.run(date),
   },
   "periodReview.put": {
     parse: (op, field) => ({
       period: requirePeriodKey(op.key, `${field}.key`),
-      review: validateReviewValue(op.review, `${field}.review`, 4000),
+      project: requirePeriodProject(op.project ?? "", `${field}.project`),
+      record: validatePeriodRecordValue(op.review, `${field}.review`),
     }),
-    run: ({ period, review }, now) => statements.upsertPeriodReview.run(...period, ...reviewParams(review, now)),
+    run: ({ period, project, record }, now) => statements.upsertPeriodRecord.run(
+      ...period, project, record.report, record.notes, now,
+    ),
   },
   "periodReview.delete": {
-    parse: (op, field) => ({ period: requirePeriodKey(op.key, `${field}.key`) }),
-    run: ({ period }) => statements.deletePeriodReview.run(...period),
-  },
-  "projectPeriodReview.put": {
     parse: (op, field) => ({
       period: requirePeriodKey(op.key, `${field}.key`),
-      project: requireString(op.project, `${field}.project`, 80),
-      review: validateReviewValue(op.review, `${field}.review`, 4000),
+      project: requirePeriodProject(op.project ?? "", `${field}.project`),
     }),
-    run: ({ period, project, review }, now) => statements.upsertProjectPeriodReview.run(
-      ...period, project, ...reviewParams(review, now),
-    ),
-  },
-  "projectPeriodReview.delete": {
-    parse: (op, field) => ({
-      period: requirePeriodKey(op.key, `${field}.key`),
-      project: requireString(op.project, `${field}.project`, 80),
-    }),
-    run: ({ period, project }) => statements.deleteProjectPeriodReview.run(...period, project),
-  },
-  "periodReport.put": {
-    parse: (op, field) => ({
-      period: requirePeriodKey(op.key, `${field}.key`),
-      report: validateReportValue(op.report, `${field}.report`),
-    }),
-    run: ({ period, report }, now) => statements.upsertPeriodReport.run(...period, report.content, now),
-  },
-  "periodReport.delete": {
-    parse: (op, field) => ({ period: requirePeriodKey(op.key, `${field}.key`) }),
-    run: ({ period }) => statements.deletePeriodReport.run(...period),
-  },
-  "projectPeriodReport.put": {
-    parse: (op, field) => ({
-      period: requirePeriodKey(op.key, `${field}.key`),
-      project: requireString(op.project, `${field}.project`, 80),
-      report: validateReportValue(op.report, `${field}.report`),
-    }),
-    run: ({ period, project, report }, now) => statements.upsertProjectPeriodReport.run(
-      ...period, project, report.content, now,
-    ),
-  },
-  "projectPeriodReport.delete": {
-    parse: (op, field) => ({
-      period: requirePeriodKey(op.key, `${field}.key`),
-      project: requireString(op.project, `${field}.project`, 80),
-    }),
-    run: ({ period, project }) => statements.deleteProjectPeriodReport.run(...period, project),
+    run: ({ period, project }) => statements.deletePeriodRecord.run(...period, project),
   },
 };
 
@@ -2833,7 +2874,7 @@ function createAgentToken(input) {
     throw new HttpError(400, "AGENT_TOKEN_INVALID_INPUT", "令牌名称不能为空且不能超过 60 个字符");
   }
   const scope = input.scope ?? "ingest";
-  if (scope !== "ingest" && scope !== "read") throw new HttpError(400, "AGENT_TOKEN_INVALID_INPUT", "令牌用途无效");
+  if (!["ingest", "read", "capture"].includes(scope)) throw new HttpError(400, "AGENT_TOKEN_INVALID_INPUT", "令牌用途无效");
   const { id, token } = issueAgentToken(name, { scope });
   const row = agentStatements.listTokens.all().find((entry) => entry.id === id);
   return { token, ...projectAgentToken(row) };
@@ -2874,9 +2915,56 @@ function authenticateAgentRequest(request) {
   return row;
 }
 
+const AGENT_SCOPE_LABELS = { ingest: "推送素材", read: "读取记录", capture: "快速记录" };
+
 function requireAgentScope(tokenRow, scope) {
   if (tokenRow.scope !== scope) {
-    throw new HttpError(403, "AGENT_SCOPE_FORBIDDEN", scope === "read" ? "这个令牌只能推送素材，不能读取记录" : "这个令牌只能读取记录，不能推送素材");
+    throw new HttpError(403, "AGENT_SCOPE_FORBIDDEN", `这个令牌只能用于${AGENT_SCOPE_LABELS[tokenRow.scope] ?? tokenRow.scope}，不能${AGENT_SCOPE_LABELS[scope]}`);
+  }
+}
+
+// Quick capture from shortcuts, launchers or scripts: one task or work log per request, written straight
+// to SQLite. The date defaults to "today" in the browser's last reported time zone.
+function captureEntry(input) {
+  const invalid = (message) => new HttpError(400, "CAPTURE_INVALID", message);
+  if (!isPlainObject(input)) throw invalid("请求内容必须是对象");
+  const type = input.type ?? "task";
+  if (type !== "task" && type !== "log") throw invalid("type 只能是 task 或 log");
+  const title = typeof input.title === "string" ? input.title.replace(/\s+/g, " ").trim() : "";
+  if (!title || title.length > 120) throw invalid("title 不能为空且不能超过 120 个字符");
+  const project = typeof input.project === "string" ? input.project.trim() : "";
+  if (project.length > 80) throw invalid("project 不能超过 80 个字符");
+  const timeZone = statements.readMetadata.get("client_timezone")?.value ?? readAgentDigestSettings().timezone;
+  const now = new Date();
+  let date;
+  let dueDate = null;
+  try {
+    date = input.date == null ? zonedParts(now, timeZone).date : requireDate(input.date, "date");
+    if (type === "task" && input.dueDate != null) dueDate = requireDate(input.dueDate, "dueDate");
+  } catch {
+    throw invalid("日期必须是 YYYY-MM-DD");
+  }
+  const priority = input.priority ?? "normal";
+  if (!["low", "normal", "high"].includes(priority)) throw invalid("priority 只能是 low、normal 或 high");
+  const id = `cap-${randomUUID()}`;
+  const createdAt = now.toISOString();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (type === "task") {
+      statements.insertTask.run(...taskRowParams({
+        id, date, title, project, priority, completed: false, createdAt, completedAt: null,
+        originDate: null, dueDate, dueTime: null, remindMinutes: null, recurrenceId: null, focus: false, goalId: null,
+      }));
+    } else {
+      statements.insertLog.run(id, date, title, project, null, createdAt, "");
+    }
+    const revision = getRevision() + 1;
+    statements.setRevision.run(String(revision));
+    database.exec("COMMIT");
+    return { id, type, date, title, project, revision };
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    throw error;
   }
 }
 
@@ -2905,9 +2993,8 @@ function readDaysForAgent(from, to) {
   for (let date = from; date <= to; date = shiftDateKey(date, 1)) {
     const tasks = data.tasks.filter((task) => task.date === date);
     const logs = data.logs.filter((log) => log.date === date && !log.sourceTaskId);
-    const review = data.reviews[date];
-    const note = data.notes[date]?.trim() ?? "";
-    if (!tasks.length && !logs.length && !note && !review) continue;
+    const review = data.reviews[date]?.content.trim() ?? "";
+    if (!tasks.length && !logs.length && !review) continue;
     days.push({
       date,
       completedTasks: tasks.filter((task) => task.completed).map((task) => ({ title: task.title, project: task.project })),
@@ -2915,8 +3002,8 @@ function readDaysForAgent(from, to) {
         title: task.title, project: task.project, ...(task.dueDate ? { due: [task.dueDate, task.dueTime].filter(Boolean).join(" ") } : {}),
       })),
       workLogs: logs.map((log) => ({ title: log.title, project: log.project, origin: logOrigin(log) })),
-      note,
-      review: review ? { problems: review.blockers ?? "", tomorrow: review.next ?? "", completed: Boolean(review.completedAt) } : null,
+      focusTasks: tasks.filter((task) => task.focus).map((task) => ({ title: task.title, completed: task.completed })),
+      review,
     });
   }
   return { from, to, days };
@@ -2927,24 +3014,19 @@ function searchForAgent(query, limit) {
   if (!terms.length || query.length > 200) throw new HttpError(400, "AGENT_READ_INVALID", "请提供 1 到 200 字的关键词");
   const data = readState();
   const entries = [];
-  const reviewText = (review) => [review?.wins, review?.blockers, review?.next].filter(Boolean).join("\n");
   for (const task of data.tasks) entries.push({ type: task.completed ? "已完成待办" : "待办", date: task.date, project: task.project, text: task.title });
   for (const log of data.logs) {
     if (!log.sourceTaskId) entries.push({ type: logOrigin(log), date: log.date, project: log.project, text: log.title });
   }
-  for (const [date, content] of Object.entries(data.notes)) entries.push({ type: "笔记", date, project: "", text: content });
-  for (const [date, review] of Object.entries(data.reviews)) entries.push({ type: "今日复盘", date, project: "", text: reviewText(review) });
-  const addPeriod = (key, project, type, text) => {
-    const [periodType, start] = key.split(":");
-    entries.push({ type, date: start, project, period: periodType, text });
-  };
-  for (const [key, review] of Object.entries(data.periodReviews)) addPeriod(key, "", "周期复盘", reviewText(review));
-  for (const [key, report] of Object.entries(data.periodReports)) addPeriod(key, "", "周期汇报", report.content);
-  for (const [key, projects] of Object.entries(data.projectPeriodReviews)) {
-    for (const [project, review] of Object.entries(projects)) addPeriod(key, project, "周期复盘", reviewText(review));
-  }
-  for (const [key, projects] of Object.entries(data.projectPeriodReports)) {
-    for (const [project, report] of Object.entries(projects)) addPeriod(key, project, "周期汇报", report.content);
+  for (const [date, review] of Object.entries(data.reviews)) entries.push({ type: "今日复盘", date, project: "", text: review.content });
+  for (const [key, projects] of Object.entries(data.periodReviews)) {
+    const { start, end } = periodBounds(key);
+    const period = key.split(":")[0];
+    for (const [project, record] of Object.entries(projects)) {
+      const scope = { date: start, project, period, ...(period === "range" ? { end } : {}) };
+      entries.push({ ...scope, type: "周期汇报", text: record.report });
+      entries.push({ ...scope, type: "周期复盘", text: record.notes });
+    }
   }
   const matches = entries
     .filter((entry) => entry.text?.trim() && terms.every((term) => `${entry.text}\n${entry.project}`.toLowerCase().includes(term)))
@@ -2966,8 +3048,8 @@ function periodStartOf(periodType, date) {
 }
 
 function periodForAgent(periodType, date, project) {
-  if (!["week", "month", "quarter", "year"].includes(periodType)) {
-    throw new HttpError(400, "AGENT_READ_INVALID", "period 必须是 week、month、quarter 或 year");
+  if (!["day", "week", "month", "quarter", "year"].includes(periodType)) {
+    throw new HttpError(400, "AGENT_READ_INVALID", "period 必须是 day、week、month、quarter 或 year");
   }
   const start = periodStartOf(periodType, date);
   const end = periodEndKey(periodType, start);
@@ -2975,9 +3057,7 @@ function periodForAgent(periodType, date, project) {
   const inScope = (item) => item.date >= start && item.date <= end && (!project || item.project === project);
   const tasks = data.tasks.filter(inScope);
   const logs = data.logs.filter((log) => inScope(log) && !log.sourceTaskId);
-  const key = `${periodType}:${start}`;
-  const report = project ? data.projectPeriodReports[key]?.[project] : data.periodReports[key];
-  const review = project ? data.projectPeriodReviews[key]?.[project] : data.periodReviews[key];
+  const record = data.periodReviews[periodKeyOf(periodType, start)]?.[project || ""];
   const activeDays = new Set([...tasks.map((task) => task.date), ...logs.map((log) => log.date)]);
   const time = readAgentTime(start, end);
   return {
@@ -3000,8 +3080,9 @@ function periodForAgent(periodType, date, project) {
       date: task.date, title: task.title, project: task.project, ...(task.dueDate ? { due: [task.dueDate, task.dueTime].filter(Boolean).join(" ") } : {}),
     })),
     timeByProject: project ? [] : time.byProject,
-    report: report?.content ?? "",
-    notes: review?.blockers ?? "",
+    goals: goalsForRange(data, start, end, project || null),
+    report: record?.report ?? "",
+    notes: record?.notes ?? "",
   };
 }
 
@@ -3792,6 +3873,11 @@ const server = createServer(async (request, response) => {
         const date = params.get("date") ? requireReadDate(params.get("date"), "date") : new Date().toISOString().slice(0, 10);
         return sendJson(response, 200, periodForAgent(params.get("period") ?? "week", date, project), request);
       }
+      if (url.pathname === "/api/agent/capture") {
+        if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+        requireAgentScope(tokenRow, "capture");
+        return sendJson(response, 201, captureEntry(await readJsonBody(request)), request);
+      }
       if (url.pathname === "/api/agent/config") {
         if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
         requireAgentScope(tokenRow, "ingest");
@@ -3826,6 +3912,12 @@ const server = createServer(async (request, response) => {
     }
     validateSameOrigin(request, { required: Boolean(ACCESS_PASSWORD_HASH) });
 
+    // Lets open pages notice writes made elsewhere (quick capture, other tabs) without pulling the whole state.
+    if (url.pathname === "/api/revision") {
+      if (request.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
+      return sendJson(response, 200, { revision: getRevision() });
+    }
+
     if (url.pathname === "/api/state") {
       if (request.method === "GET") {
         void checkAgentDigests();
@@ -3839,9 +3931,7 @@ const server = createServer(async (request, response) => {
         const currentState = readState();
         const nextState = validateState(body.data, {
           periodReviewsFallback: currentState.periodReviews,
-          projectPeriodReviewsFallback: currentState.projectPeriodReviews,
-          periodReportsFallback: currentState.periodReports,
-          projectPeriodReportsFallback: currentState.projectPeriodReports,
+          goalsFallback: currentState.goals,
           logSourcesFallback: new Map(currentState.logs.map((log) => [log.id, log.source])),
         });
         return sendJson(response, 200, replaceState(nextState, body.revision));
@@ -3967,18 +4057,17 @@ const server = createServer(async (request, response) => {
       throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
     }
 
-    if (url.pathname === "/api/ai/achievements") {
-      if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
-      const body = await readJsonBody(request);
-      requireAchievementInput(body);
-      consumeRateLimit(aiOperations, `achievements:${currentSession(request)?.id || sourceKey(request)}`, { limit: 4, windowMs: 60 * 1000 });
-      return sendJson(response, 200, await generateAchievementDoc(body));
-    }
-
     if (url.pathname === "/api/ai/period-report") {
       if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "请求方法不受支持");
-      consumeRateLimit(aiOperations, `report:${currentSession(request)?.id || sourceKey(request)}`, { limit: 10, windowMs: 60 * 1000 });
-      return sendJson(response, 200, await generatePeriodAiReport(await readJsonBody(request)));
+      const body = await readJsonBody(request);
+      const client = currentSession(request)?.id || sourceKey(request);
+      if (isPlainObject(body) && body.periodType === "range") {
+        requireAchievementInput(body);
+        consumeRateLimit(aiOperations, `achievements:${client}`, { limit: 4, windowMs: 60 * 1000 });
+      } else {
+        consumeRateLimit(aiOperations, `report:${client}`, { limit: 10, windowMs: 60 * 1000 });
+      }
+      return sendJson(response, 200, await generatePeriodAiReport(body));
     }
 
     if (url.pathname === "/api/ai/polish-entry") {

@@ -17,7 +17,7 @@ const DATE_PATTERN = "^\\d{4}-\\d{2}-\\d{2}$";
 const TOOLS = [
   {
     name: "mydays_search",
-    description: "Search the user's MyDays work records (tasks, work logs including AI-generated daily digests, notes, daily reviews, period reviews and period reports). Multiple keywords are ANDed. Results are newest first.",
+    description: "Search the user's MyDays work records (tasks, work logs including AI-generated daily digests, daily reviews, and period reports and notes, including custom-range achievement summaries). Multiple keywords are ANDed. Results are newest first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -30,7 +30,7 @@ const TOOLS = [
   },
   {
     name: "mydays_get_days",
-    description: "Get what the user did on a day or a date range (at most 31 days): completed and open tasks, work logs, the scratch note and the daily review (problems and plan for tomorrow). Days without any record are omitted.",
+    description: "Get what the user did on a day or a date range (at most 31 days): completed and open tasks, work logs, and the daily review text. Days without any record are omitted.",
     inputSchema: {
       type: "object",
       properties: {
@@ -43,11 +43,11 @@ const TOOLS = [
   },
   {
     name: "mydays_get_period",
-    description: "Get an overview of a week, month, quarter or year: metrics, every achievement with its date, open items, AI collaboration time per directory, the saved period report and notes. Use it to draft weekly/monthly reports or performance reviews.",
+    description: "Get an overview of a day, week, month, quarter or year: metrics, every achievement with its date, open items, AI collaboration time per directory, the saved period report and notes. Use it to draft weekly/monthly reports or performance reviews.",
     inputSchema: {
       type: "object",
       properties: {
-        period: { type: "string", enum: ["week", "month", "quarter", "year"], description: "Period type (default week)" },
+        period: { type: "string", enum: ["day", "week", "month", "quarter", "year"], description: "Period type (default week)" },
         date: { type: "string", pattern: DATE_PATTERN, description: "Any date inside the period, YYYY-MM-DD; defaults to today" },
         project: { type: "string", description: "Optional MyDays project name to filter by" },
       },

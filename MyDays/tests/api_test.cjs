@@ -21,12 +21,9 @@ const emptyState = {
   tasks: [],
   recurrences: [],
   logs: [],
-  notes: {},
+  goals: [],
   reviews: {},
   periodReviews: {},
-  projectPeriodReviews: {},
-  periodReports: {},
-  projectPeriodReports: {},
 };
 const seedState = {
   tasks: [{
@@ -39,12 +36,13 @@ const seedState = {
     createdAt: "2026-08-12T01:00:00.000Z",
   }],
   logs: [],
+  // A backup from before schema v11: notes and multi-part reviews are folded on import.
   notes: { "2026-08-12": "旧版笔记" },
-  reviews: {},
-  periodReviews: {},
+  reviews: { "2026-08-12": { wins: "旧版成果", blockers: "", next: "", completedAt: null } },
+  periodReviews: { "week:2026-08-10": { wins: "", blockers: "旧版周问题", next: "", completedAt: null } },
   projectPeriodReviews: {},
-  periodReports: {},
-  projectPeriodReports: {},
+  periodReports: { "week:2026-08-10": { content: "旧版周报", updatedAt: null } },
+  projectPeriodReports: { "week:2026-08-10": { 工作: { content: "旧版项目周报", updatedAt: null } } },
 };
 
 async function jsonRequest(url, options = {}) {
@@ -73,31 +71,33 @@ async function waitForServer() {
 
     const loginPageResponse = await fetch(`${baseUrl}/login`);
     assert.equal(loginPageResponse.status, 200, "/login 应返回登录页面");
-    assert.match(await loginPageResponse.text(), /styles\.css\?v=35/);
+    assert.match(await loginPageResponse.text(), /styles\.css\?v=40/);
 
+    // /tasks, /timeline and /review are old links that now open sections of the today page.
     for (const route of ["/", "/tasks", "/timeline", "/review", "/summary", "/settings", "/ai-settings", "/tasks/"]) {
       const pageResponse = await fetch(`${baseUrl}${route}`);
       assert.equal(pageResponse.status, 200, `${route} 应返回应用页面`);
       const pageHtml = await pageResponse.text();
       assert.match(pageHtml, /data-route="today"/);
-      assert.match(pageHtml, /styles\.css\?v=35/);
-      assert.match(pageHtml, /app\.js\?v=35/);
+      assert.match(pageHtml, /styles\.css\?v=40/);
+      assert.match(pageHtml, /app\.js\?v=40/);
       assert.match(pageHtml, /id="summary-export-trigger"[^>]+aria-haspopup="menu"[^>]+aria-expanded="false"/);
       assert.match(pageHtml, /id="summary-export-menu" role="menu"/);
       assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="markdown"/);
       assert.match(pageHtml, /role="menuitem"[^>]+data-export-format="excel"/);
       assert.doesNotMatch(pageHtml, /id="summary-export-(markdown|excel)"/);
     }
-    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=35`);
+    const appScriptResponse = await fetch(`${baseUrl}/app.js?v=40`);
     assert.equal(appScriptResponse.headers.get("cache-control"), "no-cache", "应用脚本必须重新验证，避免容器升级后继续使用旧版本");
     const appScript = await appScriptResponse.text();
     assert.match(appScript, /renderItemActions/);
     assert.match(appScript, /serializeAchievementsMarkdown/);
+    assert.match(appScript, /savePeriodRecordDraft/);
     assert.match(appScript, /createAchievementsWorkbook/);
     assert.match(appScript, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
     assert.match(appScript, /closeSummaryExportMenu/);
     assert.match(appScript, /moveSummaryExportFocus/);
-    const stylesheetResponse = await fetch(`${baseUrl}/styles.css?v=35`);
+    const stylesheetResponse = await fetch(`${baseUrl}/styles.css?v=40`);
     assert.equal(stylesheetResponse.headers.get("cache-control"), "no-cache", "应用样式必须重新验证，避免与旧脚本混用");
     const stylesheet = await stylesheetResponse.text();
     assert.match(stylesheet, /\.item-action/);
@@ -132,7 +132,12 @@ async function waitForServer() {
     assert.equal(result.response.status, 200);
     assert.equal("projectReviews" in result.body.data, false, "旧备份中的项目每日复盘应被忽略");
     assert.equal(result.body.data.tasks[0].title, "迁移旧待办");
-    assert.equal(result.body.data.notes["2026-08-12"], "旧版笔记");
+    assert.equal("notes" in result.body.data, false, "旧备份的笔记应并入每日复盘");
+    assert.equal(result.body.data.reviews["2026-08-12"].content, "【成果】\n旧版成果\n\n【笔记】\n旧版笔记");
+    assert.deepEqual(result.body.data.periodReviews["week:2026-08-10"], {
+      "": { report: "旧版周报", notes: "旧版周问题" },
+      工作: { report: "旧版项目周报", notes: "" },
+    });
 
     let projectsResult = await jsonRequest("/api/projects");
     assert.equal(projectsResult.response.status, 200);
@@ -201,22 +206,14 @@ async function waitForServer() {
       createdAt: "2026-08-12T02:00:00.000Z",
     });
     updatedState.periodReviews["week:2026-08-10"] = {
-      wins: "完成周期汇总存储",
-      blockers: "需要补充移动端验证",
-      next: "完成浏览器回归测试",
-      completedAt: "2026-08-16T10:00:00.000Z",
+      "": { report: "本周汇报：完成登录体验优化。", notes: "需要补充移动端验证" },
+      工作: { report: "工作项目周汇报", notes: "工作项目下周重点" },
     };
-    updatedState.periodReviews["month:2026-08-01"] = { wins: "月度成果", blockers: "", next: "下月重点", completedAt: null };
-    updatedState.periodReviews["quarter:2026-07-01"] = { wins: "季度成果", blockers: "", next: "下季度重点", completedAt: null };
-    updatedState.periodReviews["year:2026-01-01"] = { wins: "年度成果", blockers: "", next: "明年重点", completedAt: null };
-    updatedState.projectPeriodReviews["week:2026-08-10"] = {
-      工作: { wins: "工作项目周成果", blockers: "", next: "工作项目下周重点", completedAt: null },
-    };
-    updatedState.periodReports["week:2026-08-10"] = { content: "本周汇报：完成登录体验优化。", updatedAt: null };
-    updatedState.periodReports["month:2026-08-01"] = { content: "月度汇报初稿", updatedAt: null };
-    updatedState.projectPeriodReports["week:2026-08-10"] = {
-      工作: { content: "工作项目周汇报", updatedAt: null },
-    };
+    updatedState.periodReviews["month:2026-08-01"] = { "": { report: "月度汇报初稿", notes: "" } };
+    updatedState.periodReviews["quarter:2026-07-01"] = { "": { report: "", notes: "季度说明" } };
+    updatedState.periodReviews["year:2026-01-01"] = { "": { report: "", notes: "年度说明" } };
+    updatedState.periodReviews["day:2026-08-12"] = { "": { report: "日报初稿", notes: "" } };
+    updatedState.periodReviews["range:2026-01-01:2026-06-30"] = { "": { report: "上半年成果总结", notes: "" } };
 
     result = await jsonRequest("/api/state", {
       method: "PUT",
@@ -225,75 +222,67 @@ async function waitForServer() {
     assert.equal(result.response.status, 200);
     assert.equal(result.body.data.tasks[0].completed, true);
     assert.equal(result.body.data.logs.length, 1);
-    assert.equal(result.body.data.periodReviews["week:2026-08-10"].wins, "完成周期汇总存储");
-    assert.equal(Object.keys(result.body.data.periodReviews).length, 4, "四种周期复盘必须独立保存");
-    assert.equal(result.body.data.periodReviews["month:2026-08-01"].wins, "月度成果");
-    assert.equal(result.body.data.periodReviews["quarter:2026-07-01"].wins, "季度成果");
-    assert.equal(result.body.data.periodReviews["year:2026-01-01"].wins, "年度成果");
-    assert.equal(result.body.data.projectPeriodReviews["week:2026-08-10"].工作.wins, "工作项目周成果");
-    assert.equal(result.body.data.periodReports["week:2026-08-10"].content, "本周汇报：完成登录体验优化。");
-    assert.equal(result.body.data.periodReports["month:2026-08-01"].content, "月度汇报初稿");
-    assert.equal(result.body.data.projectPeriodReports["week:2026-08-10"].工作.content, "工作项目周汇报");
+    assert.equal(Object.keys(result.body.data.periodReviews).length, 6, "五种周期和自定义时间段必须独立保存");
+    assert.equal(result.body.data.periodReviews["day:2026-08-12"][""].report, "日报初稿");
+    assert.equal(result.body.data.periodReviews["week:2026-08-10"][""].notes, "需要补充移动端验证");
+    assert.equal(result.body.data.periodReviews["week:2026-08-10"].工作.report, "工作项目周汇报");
+    assert.equal(result.body.data.periodReviews["month:2026-08-01"][""].report, "月度汇报初稿");
+    assert.equal(result.body.data.periodReviews["year:2026-01-01"][""].notes, "年度说明");
+    assert.equal(result.body.data.periodReviews["range:2026-01-01:2026-06-30"][""].report, "上半年成果总结");
 
     const modernRevision = result.body.revision;
-    const oldClientState = structuredClone(result.body.data);
-    delete oldClientState.periodReviews;
-    delete oldClientState.projectPeriodReviews;
-    delete oldClientState.periodReports;
-    delete oldClientState.projectPeriodReports;
-    oldClientState.notes["2026-08-13"] = "旧客户端写入";
+    const omittingClientState = structuredClone(result.body.data);
+    delete omittingClientState.periodReviews;
     result = await jsonRequest("/api/state", {
       method: "PUT",
-      body: JSON.stringify({ data: oldClientState, revision: modernRevision }),
+      body: JSON.stringify({ data: omittingClientState, revision: modernRevision }),
     });
     assert.equal(result.response.status, 200);
     assert.equal(
-      result.body.data.periodReviews["week:2026-08-10"].wins,
-      "完成周期汇总存储",
-      "旧客户端请求不得覆盖周期复盘",
-    );
-    assert.equal(
-      result.body.data.projectPeriodReviews["week:2026-08-10"].工作.wins,
-      "工作项目周成果",
-      "旧客户端不得覆盖项目周期复盘",
-    );
-    assert.equal(
-      result.body.data.periodReports["week:2026-08-10"].content,
-      "本周汇报：完成登录体验优化。",
-      "旧客户端不得覆盖周期汇报",
-    );
-    assert.equal(
-      result.body.data.projectPeriodReports["week:2026-08-10"].工作.content,
+      result.body.data.periodReviews["week:2026-08-10"].工作.report,
       "工作项目周汇报",
-      "旧客户端不得覆盖项目周期汇报",
+      "省略 periodReviews 的整包保存不得清空周期汇报",
     );
 
-    const invalidPeriodState = structuredClone(result.body.data);
-    invalidPeriodState.periodReviews["quarter:2026-02-01"] = {
-      wins: "无效季度",
-      blockers: "",
-      next: "",
-      completedAt: null,
-    };
-    const invalidPeriodResult = await jsonRequest("/api/state", {
-      method: "PUT",
-      body: JSON.stringify({ data: invalidPeriodState, revision: result.body.revision }),
-    });
-    assert.equal(invalidPeriodResult.response.status, 400);
-    assert.equal(invalidPeriodResult.body.error.code, "INVALID_STATE");
+    for (const key of ["day:2026-02-30", "quarter:2026-02-01", "week:2026-08-11", "range:2026-06-30:2026-01-01", "range:2025-01-01:2026-06-30"]) {
+      const invalidPeriodState = structuredClone(result.body.data);
+      invalidPeriodState.periodReviews[key] = { "": { report: "无效", notes: "" } };
+      const invalidPeriodResult = await jsonRequest("/api/state", {
+        method: "PUT",
+        body: JSON.stringify({ data: invalidPeriodState, revision: result.body.revision }),
+      });
+      assert.equal(invalidPeriodResult.response.status, 400, `${key} 应被拒绝`);
+      assert.equal(invalidPeriodResult.body.error.code, "INVALID_STATE");
+    }
+    const latestRevision = result.body.revision;
 
-    const invalidReportState = structuredClone(result.body.data);
-    invalidReportState.periodReports["week:2026-08-11"] = { content: "无效周期起始日的汇报", updatedAt: null };
-    const invalidReportResult = await jsonRequest("/api/state", {
-      method: "PUT",
-      body: JSON.stringify({ data: invalidReportState, revision: result.body.revision }),
-    });
-    assert.equal(invalidReportResult.response.status, 400);
-    assert.equal(invalidReportResult.body.error.code, "INVALID_STATE");
+    const goal = (id, week, title = "周目标") => ({ id, week, title, done: false, createdAt: "2026-08-10T01:00:00.000Z" });
+    const goalState = structuredClone(result.body.data);
+    goalState.goals = [goal("g1", "2026-08-10", "完成登录体验优化")];
+    goalState.tasks[0].goalId = "g1";
+    goalState.tasks[0].focus = true;
+    result = await jsonRequest("/api/state", { method: "PUT", body: JSON.stringify({ data: goalState, revision: latestRevision }) });
+    assert.equal(result.response.status, 200);
+    assert.deepEqual(result.body.data.goals, [goal("g1", "2026-08-10", "完成登录体验优化")]);
+    assert.equal(result.body.data.tasks[0].goalId, "g1");
+    assert.equal(result.body.data.tasks[0].focus, true);
+    const { goals: _omittedGoals, ...noGoalsState } = result.body.data;
+    result = await jsonRequest("/api/state", { method: "PUT", body: JSON.stringify({ data: noGoalsState, revision: result.body.revision }) });
+    assert.equal(result.body.data.goals.length, 1, "省略 goals 的整包保存不得清空目标");
+    for (const goals of [
+      [goal("g2", "2026-08-11")],
+      Array.from({ length: 6 }, (_, index) => goal(`g${index}`, "2026-08-10")),
+    ]) {
+      const invalidGoals = await jsonRequest("/api/state", {
+        method: "PUT",
+        body: JSON.stringify({ data: { ...result.body.data, goals }, revision: result.body.revision }),
+      });
+      assert.equal(invalidGoals.response.status, 400, "目标必须落在周一且每周最多 5 个");
+    }
 
     const staleResult = await jsonRequest("/api/state", {
       method: "PUT",
-      body: JSON.stringify({ data: emptyState, revision: modernRevision }),
+      body: JSON.stringify({ data: emptyState, revision: latestRevision }),
     });
     assert.equal(staleResult.response.status, 409);
     assert.equal(staleResult.body.error.code, "STATE_CONFLICT");
@@ -308,7 +297,7 @@ async function waitForServer() {
     result = await jsonRequest("/api/state");
     assert.equal(result.body.data.tasks[0].completed, true, "失败写入不得改变数据库");
     assert.equal(result.body.data.logs.length, 1);
-    assert.equal(result.body.data.periodReviews["week:2026-08-10"].next, "完成浏览器回归测试");
+    assert.equal(result.body.data.periodReviews["week:2026-08-10"][""].notes, "需要补充移动端验证");
     assert.equal(fs.existsSync(path.join(tempDir, "mydays.db")), true);
 
     const clearResult = await jsonRequest("/api/state", {

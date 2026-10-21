@@ -55,6 +55,10 @@ seed.exec(`
   VALUES ('v1-task', '2025-12-31', '升级前的重要记录', '迁移验证', 'high', 1, '2025-12-31T01:00:00.000Z', '2025-12-31T02:00:00.000Z');
   INSERT INTO period_reviews(period_type, period_start, wins, blockers, next_actions, completed_at, updated_at)
   VALUES ('year', '2025-01-01', '升级前年度成果', '', '继续保持', NULL, '2025-12-31T03:00:00.000Z');
+  INSERT INTO notes(work_date, content, updated_at) VALUES ('2025-12-31', '升级前笔记', '2025-12-31T03:00:00.000Z');
+  INSERT INTO notes(work_date, content, updated_at) VALUES ('2025-12-30', '只有笔记的一天', '2025-12-30T03:00:00.000Z');
+  INSERT INTO reviews(work_date, wins, blockers, next_actions, completed_at, updated_at)
+  VALUES ('2025-12-31', '', '升级前的问题', '', NULL, '2025-12-31T03:00:00.000Z');
 `);
 seed.close();
 
@@ -89,26 +93,33 @@ async function waitForServer() {
     const body = await response.json();
     assert.equal(body.revision, 7, "升级不得重置 revision");
     assert.equal(body.data.tasks[0].title, "升级前的重要记录", "v1 业务数据必须保留");
-    assert.equal(body.data.periodReviews["year:2025-01-01"].wins, "升级前年度成果", "v2 周期复盘必须保留");
+    assert.equal(
+      body.data.periodReviews["year:2025-01-01"][""].notes,
+      "【成果】\n升级前年度成果\n\n【下一步】\n继续保持",
+      "v2 周期复盘必须带标签合并保留",
+    );
+    assert.equal(body.data.reviews["2025-12-31"].content, "【问题】\n升级前的问题\n\n【笔记】\n升级前笔记", "每日复盘和笔记必须合并保留");
+    assert.equal(body.data.reviews["2025-12-30"].content, "只有笔记的一天", "只有一段内容时不加标签");
+    assert.equal("notes" in body.data, false);
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
-    assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'period_reviews'").get().name, "period_reviews");
+    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "13");
+    const tableNames = new Set(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
+    for (const retired of ["notes", "reviews", "period_reviews", "project_reviews", "project_period_reviews", "period_reports", "project_period_reports"]) {
+      assert.equal(tableNames.has(retired), false, `v11 必须删除 ${retired}`);
+    }
+    assert.equal(tableNames.has("daily_reviews") && tableNames.has("period_records"), true);
     assert.equal(migrated.prepare("SELECT COUNT(*) AS count FROM tasks WHERE id = 'v1-task'").get().count, 1);
     assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_providers'").get().name, "ai_providers");
     assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_summary_settings'").get().name, "ai_summary_settings");
     assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_options'").get().name, "project_options");
-    assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_reviews'").get().name, "project_reviews");
-    assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_period_reviews'").get().name, "project_period_reviews");
-    assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'period_reports'").get().name, "period_reports");
-    assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_period_reports'").get().name, "project_period_reports");
     assert.deepEqual(
       migrated.prepare("SELECT name FROM project_options ORDER BY sort_order").all().map((row) => row.name),
       ["工作", "个人", "学习", "迁移验证"],
       "升级时必须导入默认项目和历史项目",
     );
     migrated.close();
-    console.log("MyDays schema v2 to v7 upgrade test passed");
+    console.log("MyDays schema v2 to v13 upgrade test passed");
   } finally {
     child.kill("SIGTERM");
   }
@@ -200,18 +211,17 @@ async function waitForServer6() {
     const body = await response.json();
     assert.equal(body.revision, 5, "v6 升级不得重置 revision");
     assert.equal(body.data.tasks[0].title, "升级前的周期任务", "v6 任务数据必须保留");
-    assert.equal(body.data.periodReviews["week:2026-08-10"].wins, "v6 全部项目成果", "v6 周期复盘必须保留");
-    assert.equal(body.data.projectPeriodReviews["week:2026-08-10"]["迁移验证"].wins, "v6 项目成果", "v6 项目周期复盘必须保留");
-    assert.deepEqual(body.data.periodReports, {}, "升级后新汇报表应为空");
-    assert.deepEqual(body.data.projectPeriodReports, {}, "升级后新项目汇报表应为空");
+    assert.deepEqual(body.data.periodReviews["week:2026-08-10"], {
+      "": { report: "", notes: "【成果】\nv6 全部项目成果\n\n【下一步】\n继续" },
+      迁移验证: { report: "", notes: "【成果】\nv6 项目成果\n\n【下一步】\n继续" },
+    }, "v6 全部项目与项目周期复盘必须合并保留");
 
     const migrated6 = new DatabaseSync(databasePath6, { readOnly: true });
-    assert.equal(migrated6.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
-    assert.equal(migrated6.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'period_reports'").get().name, "period_reports");
-    assert.equal(migrated6.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_period_reports'").get().name, "project_period_reports");
+    assert.equal(migrated6.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "13");
+    assert.equal(migrated6.prepare("SELECT COUNT(*) AS count FROM period_records").get().count, 2);
     assert.equal(migrated6.prepare("SELECT COUNT(*) AS count FROM tasks WHERE id = 'v6-task'").get().count, 1);
     migrated6.close();
-    console.log("MyDays schema v6 to v7 upgrade test passed");
+    console.log("MyDays schema v6 to v13 upgrade test passed");
   } finally {
     child6.kill("SIGTERM");
   }

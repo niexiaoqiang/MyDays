@@ -81,19 +81,31 @@ async function assertUpgraded() {
     await runServer(assertUpgraded);
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "10");
+    assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, "13");
+    for (const retired of ["notes", "reviews", "period_reviews", "project_reviews", "project_period_reviews", "period_reports", "project_period_reports"]) {
+      assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(retired), undefined, `重复启动不得重建已合并的 ${retired}`);
+    }
     assert.equal(migrated.prepare("PRAGMA table_info(logs)").all().filter((column) => column.name === "source").length, 1, "重复启动不得重复添加 source 列");
     assert.equal(migrated.prepare("PRAGMA table_info(agent_tokens)").all().filter((column) => column.name === "scope").length, 1, "重复启动不得重复添加 scope 列");
     const taskColumns = migrated.prepare("PRAGMA table_info(tasks)").all().map((column) => column.name);
     for (const column of ["origin_date", "due_date", "due_time", "remind_minutes", "recurrence_id"]) {
       assert.equal(taskColumns.filter((name) => name === column).length, 1, `tasks.${column} 只能添加一次`);
     }
+    for (const column of ["focus", "goal_id"]) {
+      assert.equal(taskColumns.filter((name) => name === column).length, 1, `tasks.${column} 只能添加一次`);
+    }
+    assert.match(
+      migrated.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_tokens'").get().sql,
+      /'capture'/,
+      "v12 必须允许快速记录令牌",
+    );
+    assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'goals'").get()?.name, "goals");
     assert.equal(migrated.prepare("SELECT value FROM metadata WHERE key = 'task_rollover'").get().value, "1", "升级后默认开启顺延");
     for (const table of ["agent_tokens", "agent_turns", "agent_digest_settings", "agent_digest_runs", "agent_time_daily", "task_recurrences"]) {
       assert.equal(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)?.name, table);
     }
     migrated.close();
-    console.log("MyDays schema v7 to v10 upgrade test passed");
+    console.log("MyDays schema v7 to v13 upgrade test passed");
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }

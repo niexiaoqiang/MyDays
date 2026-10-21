@@ -13,3 +13,6 @@ node_modules/
 coverage/
 mydays-data*.tar.gz
 .trellis/workspace/--help/
+
+# Local data-volume backups (contain the AI key master secret)
+backups/

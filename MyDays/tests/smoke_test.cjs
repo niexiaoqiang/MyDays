@@ -28,24 +28,46 @@ function readStoredZipEntries(buffer) {
   return entries;
 }
 
-(async () => {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
-  const fixedNow = new Date("2026-08-12T10:00:00+08:00").getTime();
-  await page.addInitScript(({ now }) => {
+function fetchState(page) {
+  return page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+}
+
+async function expectWithinViewport(page, selector, width, message) {
+  const box = await page.locator(selector).boundingBox();
+  if (!box || box.x < 0 || box.x + box.width > width) throw new Error(message);
+}
+
+// Waits until the debounced autosave of a textarea reached SQLite.
+async function waitForSaved(page, stateSelector) {
+  await page.waitForFunction((selector) => {
+    const text = document.querySelector(selector)?.textContent ?? "";
+    return text.includes("已自动保存") || text.includes("已保存");
+  }, stateSelector);
+}
+
+async function addFixedClock(page, now) {
+  await page.addInitScript(({ now: fixed }) => {
     const NativeDate = Date;
     class FixedDate extends NativeDate {
       constructor(...args) {
-        super(...(args.length ? args : [now]));
+        super(...(args.length ? args : [fixed]));
       }
-      static now() { return now; }
+      static now() { return fixed; }
     }
     Object.setPrototypeOf(FixedDate, NativeDate);
     globalThis.Date = FixedDate;
-  }, { now: fixedNow });
+  }, { now });
+}
+
+(async () => {
+  // Playwright's bundled Chromium by default; MYDAYS_CHROME points at another Chrome binary.
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.env.MYDAYS_CHROME ? { executablePath: process.env.MYDAYS_CHROME } : {}),
+  });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, acceptDownloads: true });
+  const fixedNow = new Date("2026-08-12T10:00:00+08:00").getTime();
+  await addFixedClock(page, fixedNow);
   const consoleErrors = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
@@ -56,7 +78,7 @@ function readStoredZipEntries(buffer) {
 
   await page.goto(baseUrl);
   await page.waitForLoadState("networkidle");
-  const initialState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  const initialState = await fetchState(page);
   if (!initialState.empty || initialState.revision !== 0) {
     throw new Error("浏览器测试必须使用全新的隔离 SQLite 数据库");
   }
@@ -76,28 +98,44 @@ function readStoredZipEntries(buffer) {
         completedAt: "2026-08-12T00:45:00.000Z",
       }],
       logs: [],
-      notes: { "2026-08-12": "从 localStorage 迁移的笔记" },
-      reviews: {},
+      reviews: { "2026-08-12": { content: "种子数据里的今日复盘" } },
     } }),
   }).then((response) => { if (!response.ok) throw new Error(`seed failed: ${response.status}`); }));
   await page.reload();
   await page.waitForLoadState("networkidle");
 
-  if (!(await page.locator("#workbench-overview").isVisible()) || (await page.locator(".dashboard-grid").isVisible())) {
-    throw new Error("工作台没有隔离完整待办、时间线和复盘面板");
+  // The today page shows tasks, timeline and review together; the old overview and note are gone.
+  if (!(await page.locator(".dashboard-grid").isVisible())
+    || !(await page.locator("#tasks").isVisible())
+    || !(await page.locator("#timeline").isVisible())
+    || !(await page.locator("#review").isVisible())) {
+    throw new Error("工作台页面没有同时显示待办、时间线和复盘");
+  }
+  if (await page.locator("#workbench-overview, [id^='overview-'], #daily-note").count()) {
+    throw new Error("工作台页面仍残留概览卡片或临时笔记");
   }
   if ((await page.title()) !== "MyDays · 工作台"
     || (await page.getByRole("link", { name: "工作台", exact: true }).getAttribute("aria-current")) !== "page") {
-    throw new Error("工作台命名或激活状态不正确");
+    throw new Error("工作台页面命名或激活状态不正确");
   }
-  if ((await page.locator("#overview-task-count").innerText()) !== "0"
-    || (await page.locator("#overview-log-count").innerText()) !== "0"
-    || (await page.locator("#overview-review-status").innerText()) !== "待复盘") {
-    throw new Error("工作台初始摘要不正确");
+  if ((await page.locator(".nav-list > .nav-item").count()) !== 3) throw new Error("主导航应包含今天、即将到期和周期汇总");
+  if (!(await page.locator("#sidebar-search").isVisible())
+    || !(await page.locator("#sidebar-project-list .sidebar-project").count())
+    || (await page.locator("#heatmap-grid [data-date]").count()) < 28
+    || !(await page.locator(".sidebar-settings").isVisible())) {
+    throw new Error("侧边栏缺少搜索、项目、月历热力图或设置入口");
   }
-  if ((await page.getByLabel("临时笔记").inputValue()) !== "从 localStorage 迁移的笔记") {
-    throw new Error("种子数据中的临时笔记没有显示");
+  if (await page.locator("#export-button, #import-button, .backup-button").count()) {
+    throw new Error("侧栏不应再显示备份按钮");
   }
+  if ((await page.locator("#review-content").inputValue()) !== "种子数据里的今日复盘") {
+    throw new Error("种子数据中的今日复盘没有显示");
+  }
+  if (await page.locator("#review-blockers, #review-next, #complete-review").count()
+    || await page.getByRole("button", { name: "完成今日复盘" }).count()) {
+    throw new Error("今日复盘应只剩一个自动保存的文本框");
+  }
+  if ("notes" in (await fetchState(page)).data) throw new Error("状态中不应再出现临时笔记");
 
   await page.locator("#date-picker-button").click();
   if (!(await page.locator("#calendar-popover").isVisible())) throw new Error("日期选择器没有打开");
@@ -115,22 +153,33 @@ function readStoredZipEntries(buffer) {
   await page.locator("#date-picker-button").click();
   await page.locator(".calendar-day[data-date=\"2026-08-11\"]").click();
   if (!(await page.locator("#date-label").innerText()).includes("8月11日")) throw new Error("选择日期后顶部日期没有更新");
-  if ((await page.getByLabel("临时笔记").inputValue()) !== "") throw new Error("选择日期后没有切换对应日期数据");
+  if ((await page.locator("#review-content").inputValue()) !== "") throw new Error("选择日期后没有切换对应日期的复盘");
   await page.locator("#date-picker-button").click();
   await page.locator(".calendar-day[data-date=\"2026-08-12\"]").click();
-  if ((await page.getByLabel("临时笔记").inputValue()) !== "从 localStorage 迁移的笔记") {
-    throw new Error("月历切回原日期后数据没有恢复");
+  if ((await page.locator("#review-content").inputValue()) !== "种子数据里的今日复盘") {
+    throw new Error("月历切回原日期后复盘没有恢复");
   }
 
   await page.locator("#date-picker-button").click();
   await page.locator(".welcome-copy").click({ position: { x: 4, y: 4 } });
   if (await page.locator("#calendar-popover").isVisible()) throw new Error("点击月历外部没有关闭日期选择器");
 
-  await page.getByRole("link", { name: "待办事项" }).click();
-  if (new URL(page.url()).pathname !== "/tasks") throw new Error("待办页面 URL 不正确");
-  if ((await page.title()) !== "MyDays · 待办事项") throw new Error("待办页面标题不正确");
-  if (!(await page.locator(".task-panel").isVisible()) || (await page.locator(".timeline-panel").isVisible())) {
-    throw new Error("待办页面内容隔离不正确");
+  // The former task / timeline / review pages are aliases of sections on the today page.
+  for (const section of ["tasks", "timeline", "review"]) {
+    await page.goto(`${baseUrl}/${section}`);
+    await page.waitForLoadState("networkidle");
+    const url = new URL(page.url());
+    if (url.pathname !== "/" || url.hash !== `#${section}`) throw new Error(`/${section} 没有改写为 /#${section}`);
+    if ((await page.title()) !== "MyDays · 工作台" || !(await page.locator(".dashboard-grid").isVisible())) {
+      throw new Error(`/${section} 没有打开工作台页面`);
+    }
+    await page.waitForTimeout(100);
+    const scrolledToSection = await page.evaluate((id) => {
+      const top = document.getElementById(id).getBoundingClientRect().top;
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+      return Math.abs(top) < 2 || (atBottom && top >= 0 && top < window.innerHeight);
+    }, section);
+    if (!scrolledToSection) throw new Error(`/${section} 没有滚动到对应区块`);
   }
   await page.locator(".task-title", { hasText: "从浏览器迁移的待办" }).waitFor();
 
@@ -174,7 +223,7 @@ function readStoredZipEntries(buffer) {
   if ((await captureInput.inputValue()) !== "8月20日前尽快的完成 MyDays v2.1 登录页修复") {
     throw new Error("AI 润色预览提前覆盖了原文");
   }
-  await page.getByRole("button", { name: "取消" }).click();
+  await page.locator("#capture-polish-cancel").click();
   if ((await captureInput.inputValue()) !== "8月20日前尽快的完成 MyDays v2.1 登录页修复") {
     throw new Error("取消 AI 润色后原文发生变化");
   }
@@ -190,18 +239,21 @@ function readStoredZipEntries(buffer) {
   }
   if (polishRequests.at(-1)?.type !== "task") throw new Error("待办润色请求类型不正确");
 
+  // Project management lives in the general settings tab; the capture menu links there.
   await page.locator("#project-select-trigger").click();
   await page.getByRole("button", { name: "管理项目" }).click();
+  await page.waitForFunction(() => location.pathname === "/settings" && location.hash === "#general");
+  if (!(await page.locator("#settings-panel-general").isVisible())) throw new Error("管理项目没有打开通用设置");
   await page.locator("#project-new-name").fill("自定义研发项目");
   await page.getByRole("button", { name: "添加项目" }).click();
   await page.locator(".project-option-row[data-name='自定义研发项目']").waitFor();
-  await page.locator("#project-dialog-done").click();
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
   await page.locator("#project-select-trigger").click();
   await page.locator("#project-select-menu [data-value='自定义研发项目']").click();
   await page.locator("#priority-select-trigger").click();
   await page.locator("#priority-select-menu [data-value='high']").click();
   await page.getByPlaceholder("写下需要完成的事，按 Enter 保存…").fill("完成 MyDays 第一版");
-  await page.getByRole("button", { name: "添加" }).click();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
   await page.locator(".task-title", { hasText: "完成 MyDays 第一版" }).waitFor();
   if ((await page.locator("#task-count").innerText()) !== "1") throw new Error("待办计数不正确");
   const createdTask = page.locator(".task-item", { hasText: "完成 MyDays 第一版" });
@@ -237,16 +289,16 @@ function readStoredZipEntries(buffer) {
   await page.locator(".entry-edit-title").fill("完成 MyDays 第一版验收");
   await page.locator("[data-entry-edit-select][data-field='priority'] .capture-select-trigger").click();
   await page.locator("[data-entry-edit-select][data-field='priority'] [data-value='low']").click();
-  await page.screenshot({ path: "/tmp/mydays-smoke/inline-edit-desktop.png", fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/inline-edit-desktop.png`, fullPage: true });
   await page.getByRole("button", { name: "保存修改" }).click();
   await page.locator(".task-title", { hasText: "完成 MyDays 第一版验收" }).waitFor();
-  const editedTaskState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  const editedTaskState = await fetchState(page);
   const editedTask = editedTaskState.data.tasks.find((task) => task.title === "完成 MyDays 第一版验收");
   if (!editedTask || editedTask.priority !== "low" || editedTask.project !== "自定义研发项目") {
     throw new Error("待办原位置编辑没有保存标题、项目或优先级");
   }
   await page.getByPlaceholder("写下需要完成的事，按 Enter 保存…").fill("临时删除待办");
-  await page.getByRole("button", { name: "添加" }).click();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
   const disposableTask = page.locator(".task-item", { hasText: "临时删除待办" });
   page.once("dialog", (dialog) => dialog.accept());
   await disposableTask.getByRole("button", { name: "删除待办：临时删除待办" }).click();
@@ -254,50 +306,22 @@ function readStoredZipEntries(buffer) {
     throw new Error("待办删除功能失效");
   }
 
-  await page.getByRole("link", { name: "工作台", exact: true }).click();
-  if (new URL(page.url()).pathname !== "/" || (await page.locator("#overview-task-list .overview-item").count()) !== 1) {
-    throw new Error("工作台未显示新增的待办摘要");
+  // Recurrence, rollover and notifications are managed in one task settings dialog.
+  await page.locator("#task-settings-open").click();
+  const taskSettings = page.locator("#task-settings-dialog");
+  if (!(await taskSettings.isVisible())
+    || !(await taskSettings.locator("#task-rollover").count())
+    || !(await taskSettings.locator("#task-notify-state").isVisible())
+    || !(await taskSettings.locator("#recurrence-list").count())) {
+    throw new Error("待办设置弹窗没有包含重复、顺延和提醒设置");
   }
-  if (!(await page.locator("#overview-task-list").innerText()).includes("完成 MyDays 第一版验收")) {
-    throw new Error("工作台待办摘要内容不正确");
-  }
-  await page.evaluate(() => {
-    const now = new Date().toISOString();
-    for (let index = 0; index < 3; index += 1) {
-      state.tasks.push({ id: `overview-limit-${index}`, date: selectedDate, title: `临时摘要 ${index}`, project: "", priority: "normal", completed: false, createdAt: now });
-    }
-    renderOverview();
-  });
-  if ((await page.locator("#overview-task-list .overview-item").count()) !== 3) throw new Error("工作台待办摘要超过 3 条");
-  await page.evaluate(() => {
-    state.tasks = state.tasks.filter((task) => !task.id.startsWith("overview-limit-"));
-    renderOverview();
-  });
-  const overviewTaskLink = page.locator(".overview-task-card [data-app-link]");
-  const modifiedOverviewClickPrevented = await overviewTaskLink.evaluate((link) => {
-    let prevented = null;
-    link.addEventListener("click", (event) => {
-      prevented = event.defaultPrevented;
-      event.preventDefault();
-    }, { once: true });
-    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
-    return prevented;
-  });
-  if (modifiedOverviewClickPrevented !== false) throw new Error("工作台摘要错误拦截了修饰键点击");
-  await overviewTaskLink.click();
-  if (new URL(page.url()).pathname !== "/tasks" || !(await page.locator(".task-panel").isVisible())) {
-    throw new Error("工作台待办入口没有无刷新进入专属页面");
-  }
+  await page.locator("#task-settings-close").click();
+  if (await taskSettings.isVisible()) throw new Error("待办设置弹窗没有关闭");
 
   await page.getByRole("button", { name: "完成待办：完成 MyDays 第一版验收" }).click();
   if ((await page.locator("#task-count").innerText()) !== "0") throw new Error("完成后的待办计数不正确");
   if ((await page.locator("#score-number").innerText()) !== "100%") throw new Error("完成度不正确");
 
-  await page.getByRole("link", { name: "工作时间线" }).click();
-  if (new URL(page.url()).pathname !== "/timeline") throw new Error("时间线页面 URL 不正确");
-  if (!(await page.locator(".timeline-panel").isVisible()) || (await page.locator(".task-panel").isVisible())) {
-    throw new Error("时间线页面内容隔离不正确");
-  }
   await page.locator(".timeline-content p", { hasText: "完成 MyDays 第一版验收" }).waitFor();
   const autoLog = page.locator(".timeline-item.auto", { hasText: "完成 MyDays 第一版验收" });
   await autoLog.getByRole("button", { name: "编辑工作记录：完成 MyDays 第一版验收" }).click();
@@ -307,18 +331,19 @@ function readStoredZipEntries(buffer) {
   await page.locator(".entry-edit-title").fill("完成 MyDays 第一版验收（已复核）");
   await page.getByRole("button", { name: "保存修改" }).click();
   await page.locator(".timeline-content p", { hasText: "完成 MyDays 第一版验收（已复核）" }).waitFor();
-  const autoEditState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  const autoEditState = await fetchState(page);
   const sourceTask = autoEditState.data.tasks.find((task) => task.title === "完成 MyDays 第一版验收（已复核）");
   const sourceLogs = autoEditState.data.logs.filter((log) => log.sourceTaskId === sourceTask?.id);
   if (!sourceTask || sourceLogs.length !== 1 || sourceLogs[0].title !== sourceTask.title || sourceLogs[0].project !== sourceTask.project) {
     throw new Error("自动完成记录没有通过来源待办同步更新");
   }
+  await page.getByRole("tab", { name: "工作记录" }).click();
   await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("检查移动端布局");
   await page.getByRole("button", { name: "AI 润色" }).click();
   await page.locator("#capture-polish-suggestion").waitFor();
   if (polishRequests.at(-1)?.type !== "log") throw new Error("工作记录润色请求类型不正确");
-  await page.getByRole("button", { name: "取消" }).click();
-  await page.getByRole("button", { name: "添加" }).click();
+  await page.locator("#capture-polish-cancel").click();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
   await page.locator(".timeline-content p", { hasText: "检查移动端布局" }).waitFor();
   const manualLog = page.locator(".timeline-item", { hasText: "检查移动端布局" });
   await manualLog.getByRole("button", { name: "编辑工作记录：检查移动端布局" }).click();
@@ -326,39 +351,47 @@ function readStoredZipEntries(buffer) {
   await page.getByRole("button", { name: "保存修改" }).click();
   await page.locator(".timeline-content p", { hasText: "检查移动端布局与交互" }).waitFor();
   await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("临时删除记录");
-  await page.getByRole("button", { name: "添加" }).click();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
   const disposableLog = page.locator(".timeline-item", { hasText: "临时删除记录" });
   page.once("dialog", (dialog) => dialog.accept());
   await disposableLog.getByRole("button", { name: "删除工作记录：临时删除记录" }).click();
   if (await page.locator(".timeline-content p", { hasText: "临时删除记录" }).count()) {
     throw new Error("工作记录删除功能失效");
   }
-  const autoReviewAfterLog = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if ((autoReviewAfterLog.data.reviews["2026-08-12"]?.wins ?? "").includes("检查移动端布局与交互")) {
-    throw new Error("今日复盘不应再自动复述时间线中的工作记录");
+  const reviewAfterLog = (await fetchState(page)).data.reviews["2026-08-12"]?.content ?? "";
+  if (reviewAfterLog.includes("检查移动端布局与交互")) throw new Error("今日复盘不应自动复述时间线中的工作记录");
+
+  // The daily review is one textarea that autosaves its content.
+  await page.locator("#review-content").fill("这是我手工修改的复盘");
+  await waitForSaved(page, "#review-state");
+  if ((await page.evaluate(() => JSON.stringify(state.reviews["2026-08-12"]))) !== JSON.stringify({ content: "这是我手工修改的复盘" })) {
+    throw new Error("今日复盘没有以 { content } 形式写入状态");
   }
-  await page.getByRole("link", { name: "今日复盘" }).click();
-  await page.locator("#review-next").fill("这是我手工修改的复盘");
-  await page.waitForTimeout(500);
-  await page.getByRole("link", { name: "工作时间线" }).click();
   await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("手工复盘后的工作记录");
-  await page.getByRole("button", { name: "添加" }).click();
-  const stateAfterManualReview = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (stateAfterManualReview.data.reviews["2026-08-12"]?.next !== "这是我手工修改的复盘") {
-    throw new Error("新增工作记录覆盖了手工编辑的今日复盘");
+  await page.getByRole("button", { name: "添加", exact: true }).click();
+  await page.locator(".timeline-content p", { hasText: "手工复盘后的工作记录" }).waitFor();
+  const stateAfterManualReview = await fetchState(page);
+  const savedReview = stateAfterManualReview.data.reviews["2026-08-12"];
+  if (savedReview?.content !== "这是我手工修改的复盘" || "blockers" in savedReview || "next" in savedReview) {
+    throw new Error("新增工作记录覆盖了手工编辑的今日复盘，或复盘仍包含旧字段");
   }
+  if (!(await page.locator("#review-day-summary").innerText()).includes("详见工作时间线")) throw new Error("今日复盘缺少当天记录概览");
 
   await page.locator("#project-select-trigger").click();
   await page.getByRole("button", { name: "管理项目" }).click();
+  await page.waitForFunction(() => location.pathname === "/settings");
   const customProjectRow = page.locator(".project-option-row[data-name='自定义研发项目']");
   await customProjectRow.getByRole("button", { name: "上移项目：自定义研发项目" }).click();
   const renamedInput = page.locator(".project-option-row[data-name='自定义研发项目'] input");
   await renamedInput.fill("研发项目（新）");
   await page.keyboard.press("Enter");
   await page.locator(".project-option-row[data-name='研发项目（新）']").waitFor();
-  await page.locator("#project-dialog-done").click();
   await page.reload();
   await page.waitForLoadState("networkidle");
+  if (!(await page.locator(".project-option-row[data-name='研发项目（新）']").isVisible())) {
+    throw new Error("刷新后设置页没有保留项目改名");
+  }
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
   await page.locator("#project-select-trigger").click();
   const projectValuesAfterReload = await page.locator("#project-select-menu .capture-select-option").evaluateAll((options) => options.map((option) => option.dataset.value));
   if (projectValuesAfterReload.indexOf("研发项目（新）") !== 3) throw new Error("项目重命名或排序刷新后未保留");
@@ -367,39 +400,16 @@ function readStoredZipEntries(buffer) {
   await page.getByRole("button", { name: "管理项目" }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.locator(".project-option-row[data-name='研发项目（新）']").getByRole("button", { name: "删除项目：研发项目（新）" }).click();
-  await page.locator("#project-dialog-done").click();
+  await page.locator(".project-option-row[data-name='研发项目（新）']").waitFor({ state: "detached" });
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
   if ((await page.locator("#project-select").inputValue()) !== "") throw new Error("删除当前项目后表单没有回退到无项目");
-  const historyAfterOptionChanges = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
+  const historyAfterOptionChanges = await fetchState(page);
   const projectHistory = [...historyAfterOptionChanges.data.tasks, ...historyAfterOptionChanges.data.logs]
     .filter((item) => item.title.includes("MyDays") || item.title.includes("移动端") || item.title.includes("手工复盘"));
   if (!projectHistory.length || projectHistory.some((item) => item.project !== "自定义研发项目")) {
     throw new Error("项目选项重命名或删除改写了历史记录");
   }
-
-  await page.getByRole("link", { name: "工作台", exact: true }).click();
-  if (new URL(page.url()).pathname !== "/") throw new Error("工作台 URL 不正确");
-  if ((await page.locator("#overview-log-list .overview-item").count()) !== 3
-    || (await page.locator("#overview-review-status").innerText()) !== "进行中") {
-    throw new Error("工作台动态摘要或复盘状态不正确");
-  }
-  await page.screenshot({ path: `${screenshotDir}/workbench-desktop.png`, fullPage: true });
-  await page.getByLabel("临时笔记").fill("第一版交互已经可以使用。");
-
-  await page.getByRole("link", { name: "今日复盘" }).click();
-  if (new URL(page.url()).pathname !== "/review") throw new Error("复盘页面 URL 不正确");
-  if (!(await page.locator(".review-panel").isVisible()) || (await page.locator(".capture-card").isVisible())) {
-    throw new Error("复盘页面内容隔离不正确");
-  }
-  if (await page.locator("#review-project-filter").count()) throw new Error("今日复盘不应显示项目分类");
-  if ((await page.locator("#review-next").inputValue()) !== "这是我手工修改的复盘") throw new Error("今日综合复盘没有正确加载");
-  if (await page.locator("#review-wins, #generate-review").count()) throw new Error("今日复盘不应再显示“今天完成了什么”");
-  if (!(await page.locator("#review-day-summary").innerText()).includes("详见工作时间线")) throw new Error("今日复盘缺少当天记录概览");
-  await page.locator("#review-blockers").fill("今日综合复盘问题");
-  await page.getByRole("button", { name: "完成今日复盘" }).click();
-  if (!(await page.locator("#review-state").innerText()).includes("已于")) throw new Error("复盘状态不正确");
-  const savedDailyReview = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (savedDailyReview.data.reviews["2026-08-12"]?.blockers !== "今日综合复盘问题") throw new Error("今日综合复盘没有保存");
-  if ("projectReviews" in savedDailyReview.data) throw new Error("项目每日复盘已移除，不应再出现在状态中");
+  await page.screenshot({ path: `${screenshotDir}/today-desktop.png`, fullPage: true });
 
   await page.getByRole("link", { name: "周期汇总" }).click();
   if (new URL(page.url()).pathname !== "/summary") throw new Error("周期汇总页面 URL 不正确");
@@ -408,6 +418,9 @@ function readStoredZipEntries(buffer) {
   }
   if (!(await page.locator(".topbar").isVisible()) || !(await page.locator("#account-menu-button").isVisible())) {
     throw new Error("周期汇总页无法访问账户菜单");
+  }
+  if (await page.locator("#achievements-dialog, #save-summary-review").count()) {
+    throw new Error("成果总结弹窗和保存按钮应已移除");
   }
   if (!(await page.locator(".summary-scope-bar").isVisible())
     || !(await page.locator("#summary-project-trigger").isVisible())
@@ -423,6 +436,7 @@ function readStoredZipEntries(buffer) {
   if (!scopeFollowsDate) {
     throw new Error("周期汇总项目范围没有放在日期选择下方");
   }
+  if (await page.locator("#summary-range-controls").isVisible()) throw new Error("非自定义周期不应显示时间段选择");
   if ((await page.locator("#summary-completed").innerText()) !== "2") throw new Error("周期完成待办汇总不正确");
   if ((await page.locator("#summary-rate").innerText()) !== "100%") throw new Error("周期完成率汇总不正确");
   if ((await page.locator("#summary-logs").innerText()) !== "3") throw new Error("周期工作记录汇总不正确");
@@ -550,53 +564,74 @@ function readStoredZipEntries(buffer) {
     throw new Error("空成果范围仍生成了文件或没有给出提示");
   }
   await page.locator("#summary-current").click();
-  let aiReportRequest = null;
+
+  // The period report is saved per scope as { report, notes }; "" is the all-projects scope.
+  const aiReportRequests = [];
   await page.route("**/api/ai/period-report", async (route) => {
-    aiReportRequest = route.request().postDataJSON();
+    const body = route.request().postDataJSON();
+    aiReportRequests.push(body);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        report: "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。",
+        report: body.periodType === "range"
+          ? "## 交付\n- 完成登录体验与移动端布局检查。"
+          : "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。",
         provider: "浏览器模拟服务",
         model: "browser-report-model",
         latencyMs: 42,
       }),
     });
   });
+  const weeklyReport = "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。";
+  if ((await page.locator("#summary-report-label").innerText()) !== "AI 周报") throw new Error("周期汇报标签不正确");
   await page.locator("#generate-ai-summary").click();
-  await page.waitForFunction(() => document.querySelector("#summary-ai-report")?.value?.includes("本周完成登录体验"));
-  if (JSON.stringify(aiReportRequest) !== JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "自定义研发项目" })) {
+  await page.waitForFunction((text) => document.querySelector("#summary-ai-report")?.value === text, weeklyReport);
+  if (JSON.stringify(aiReportRequests.at(-1)) !== JSON.stringify({ periodType: "week", periodStart: "2026-08-10", project: "自定义研发项目" })) {
     throw new Error("周期 AI 总结请求没有使用当前规范周期");
   }
   await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("生成并已保存"));
-  const stateAfterAiReport = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (stateAfterAiReport.data.projectPeriodReports["week:2026-08-10"]?.["自定义研发项目"]?.content
-    !== "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。") {
-    throw new Error("AI 总结生成后没有立即保存到项目周期 SQLite 数据");
+  const stateAfterAiReport = await fetchState(page);
+  const projectRecord = stateAfterAiReport.data.periodReviews["week:2026-08-10"]?.["自定义研发项目"];
+  if (projectRecord?.report !== weeklyReport || projectRecord.notes !== "") {
+    throw new Error("AI 总结生成后没有立即保存为项目周期 { report, notes }");
+  }
+  for (const legacyKey of ["projectPeriodReports", "projectPeriodReviews", "periodReports"]) {
+    if (legacyKey in stateAfterAiReport.data) throw new Error(`状态中不应再出现 ${legacyKey}`);
   }
   await page.reload();
   await page.waitForLoadState("networkidle");
   await page.locator("#summary-project-trigger").click();
   await page.locator("#summary-project-menu [data-value='自定义研发项目']").click();
-  if ((await page.locator("#summary-ai-report").inputValue()) !== "本周完成登录体验与移动端布局检查，下一步继续验证数据边界。") {
+  if ((await page.locator("#summary-ai-report").inputValue()) !== weeklyReport) {
     throw new Error("AI 总结刷新后没有从 SQLite 恢复");
   }
   await page.locator("#summary-blockers").fill("自定义研发项目问题");
-  await page.getByRole("button", { name: "完成周度复盘" }).click();
-  await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("已于"));
-  const savedProjectPeriodReview = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (savedProjectPeriodReview.data.projectPeriodReviews["week:2026-08-10"]?.["自定义研发项目"]?.blockers !== "自定义研发项目问题") {
-    throw new Error("项目周期复盘没有独立保存");
+  await waitForSaved(page, "#summary-review-state");
+  const savedProjectPeriodReview = await fetchState(page);
+  if (JSON.stringify(savedProjectPeriodReview.data.periodReviews["week:2026-08-10"]?.["自定义研发项目"])
+    !== JSON.stringify({ report: weeklyReport, notes: "自定义研发项目问题" })) {
+    throw new Error("项目周期汇报的补充说明没有独立保存");
+  }
+  const reportDownloadPromise = page.waitForEvent("download");
+  await page.locator("#download-summary-report").click();
+  const reportDownload = await reportDownloadPromise;
+  const reportMarkdown = fs.readFileSync(await reportDownload.path(), "utf8");
+  if (!reportDownload.suggestedFilename().endsWith(".md")
+    || !reportDownload.suggestedFilename().includes("周报")
+    || !reportDownload.suggestedFilename().includes("week-2026-08-10")
+    || reportMarkdown.trim() !== weeklyReport) {
+    throw new Error("下载 Markdown 没有导出当前周期汇报");
   }
   await page.locator("#summary-project-trigger").click();
   await page.locator("#summary-project-menu [data-value='']").click();
   if ((await page.locator("#summary-ai-report").inputValue()) !== ""
-    || (await page.locator("#summary-blockers").inputValue()) === "自定义研发项目问题") {
-    throw new Error("项目周期 AI 总结或复盘内容泄漏到全部项目范围");
+    || (await page.locator("#summary-blockers").inputValue()) !== "") {
+    throw new Error("项目周期 AI 总结或补充说明泄漏到全部项目范围");
   }
   await page.getByRole("button", { name: "每月" }).click();
   if (!(await page.locator("#summary-period-label").innerText()).includes("8月")) throw new Error("月度周期切换失败");
+  if ((await page.locator("#summary-report-label").innerText()) !== "AI 月报") throw new Error("月度汇报标签不正确");
   await page.getByRole("button", { name: "每季度" }).click();
   if (!(await page.locator("#summary-period-label").innerText()).includes("第3季度")) throw new Error("季度周期边界不正确");
   await page.getByRole("button", { name: "每年" }).click();
@@ -640,14 +675,64 @@ function readStoredZipEntries(buffer) {
   await page.getByRole("button", { name: "回到本周期" }).click();
   if (await page.locator("#summary-wins, #summary-next-actions").count()) throw new Error("周期复盘不应再重复显示成果和下一周期重点");
   await page.locator("#summary-blockers").fill("继续检查数据边界。");
-  await page.getByRole("button", { name: "完成周度复盘" }).click();
-  await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("已于"));
-  if (!(await page.locator("#summary-review-state").innerText()).includes("已于")) throw new Error("周期复盘状态不正确");
+  await waitForSaved(page, "#summary-review-state");
+  const savedAllProjectsReview = await fetchState(page);
+  if (JSON.stringify(savedAllProjectsReview.data.periodReviews["week:2026-08-10"]?.[""])
+    !== JSON.stringify({ report: "", notes: "继续检查数据边界。" })) {
+    throw new Error("全部项目的周期汇报没有以空项目键保存");
+  }
   const currentWeekLabel = await page.locator("#summary-period-label").innerText();
   await page.getByRole("button", { name: "上一个周期" }).click();
   if ((await page.locator("#summary-period-label").innerText()) === currentWeekLabel) throw new Error("上一周期导航失败");
   await page.getByRole("button", { name: "回到本周期" }).click();
   if ((await page.locator("#summary-period-label").innerText()) !== currentWeekLabel) throw new Error("回到本周期失败");
+
+  // Custom ranges replace the old achievements dialog.
+  await page.getByRole("button", { name: "自定义", exact: true }).click();
+  if (!(await page.locator("#summary-range-controls").isVisible())
+    || await page.locator("#summary-previous").isVisible()
+    || await page.locator("#summary-next").isVisible()
+    || (await page.locator("#summary-period-label").innerText()) !== "自定义时间段"
+    || (await page.locator(".period-tab[data-period='range']").getAttribute("aria-pressed")) !== "true") {
+    throw new Error("自定义时间段没有显示时间段选择");
+  }
+  if ((await page.locator("#summary-range-from").inputValue()) !== "2026-07-01"
+    || (await page.locator("#summary-range-to").inputValue()) !== "2026-08-12") {
+    throw new Error("自定义时间段默认范围不是下半年至今");
+  }
+  if (!(await page.locator("[data-range='second-half']").getAttribute("class")).includes("active")) {
+    throw new Error("默认时间段没有高亮对应的常用时间段");
+  }
+  if ((await page.locator("#summary-report-label").innerText()) !== "AI 成果总结") throw new Error("自定义时间段汇报标签不正确");
+  await page.locator("[data-range='first-half']").click();
+  if ((await page.locator("#summary-range-from").inputValue()) !== "2026-01-01"
+    || (await page.locator("#summary-range-to").inputValue()) !== "2026-06-30"
+    || (await page.locator("#summary-completed").innerText()) !== "0") {
+    throw new Error("常用时间段“上半年”没有生效");
+  }
+  await page.locator("#summary-range-to").fill("2026-08-12");
+  await page.locator("#summary-range-from").fill("2026-08-01");
+  if ((await page.locator("#summary-completed").innerText()) !== "2"
+    || (await page.locator("#summary-logs").innerText()) !== "3"
+    || (await page.locator("#summary-days-total").innerText()) !== "共 12 天") {
+    throw new Error("自定义时间段汇总不正确");
+  }
+  await page.locator("#summary-range-from").fill("2026-09-01");
+  if (!(await page.locator("#toast").innerText()).includes("开始日期不能晚于结束日期")
+    || (await page.locator("#summary-range-from").inputValue()) !== "2026-08-01") {
+    throw new Error("开始日期晚于结束日期时没有拒绝");
+  }
+  await page.locator("#generate-ai-summary").click();
+  await page.waitForFunction(() => document.querySelector("#summary-review-state")?.textContent?.includes("生成并已保存"));
+  if (JSON.stringify(aiReportRequests.at(-1)) !== JSON.stringify({ periodType: "range", from: "2026-08-01", to: "2026-08-12" })) {
+    throw new Error("自定义时间段 AI 总结请求不正确");
+  }
+  const rangeState = await fetchState(page);
+  if (rangeState.data.periodReviews["range:2026-08-01:2026-08-12"]?.[""]?.report !== "## 交付\n- 完成登录体验与移动端布局检查。") {
+    throw new Error("自定义时间段汇报没有保存到 range 键");
+  }
+  await page.getByRole("button", { name: "每周" }).click();
+  if (await page.locator("#summary-range-controls").isVisible()) throw new Error("切回每周后仍显示时间段选择");
 
   await page.reload();
   await page.waitForLoadState("networkidle");
@@ -655,48 +740,36 @@ function readStoredZipEntries(buffer) {
     throw new Error("周期汇总子页面刷新后路由丢失");
   }
   if ((await page.locator("#summary-blockers").inputValue()) !== "继续检查数据边界。") {
-    throw new Error("周期复盘刷新后没有从 SQLite 恢复");
+    throw new Error("周期汇报刷新后没有从 SQLite 恢复");
   }
-  await page.getByRole("link", { name: "待办事项" }).click();
-  await page.locator(".task-title", { hasText: "完成 MyDays 第一版验收（已复核）" }).waitFor();
-  await page.getByRole("link", { name: "工作时间线" }).click();
-  await page.getByRole("link", { name: "今日复盘" }).click();
-  await page.goBack();
-  await page.waitForFunction(() => location.pathname === "/timeline");
-  if (!(await page.locator(".timeline-panel").isVisible())) throw new Error("浏览器后退未恢复时间线页面");
-  await page.goBack();
-  await page.waitForFunction(() => location.pathname === "/tasks");
-  if (!(await page.locator(".task-panel").isVisible())) throw new Error("浏览器后退未恢复待办页面");
   await page.getByRole("link", { name: "工作台", exact: true }).click();
-  if ((await page.locator("#overview-review-status").innerText()) !== "已完成") {
-    throw new Error("工作台没有显示已完成的复盘状态");
+  await page.locator(".task-title", { hasText: "完成 MyDays 第一版验收（已复核）" }).waitFor();
+  if ((await page.locator("#review-content").inputValue()) !== "这是我手工修改的复盘") {
+    throw new Error("刷新后今日复盘没有从 SQLite 恢复");
   }
-  if ((await page.getByLabel("临时笔记").inputValue()) !== "第一版交互已经可以使用。") {
-    throw new Error("刷新后 SQLite 笔记没有保留");
-  }
-  const serverState = await page.evaluate(() => fetch("/api/state").then((response) => response.json()));
-  if (!serverState.data.tasks.some((task) => task.title === "完成 MyDays 第一版验收（已复核）")) {
-    throw new Error("服务器 SQLite 中没有新增待办");
-  }
-  if (serverState.data.notes["2026-08-12"] !== "第一版交互已经可以使用。") {
-    throw new Error("服务器 SQLite 中没有临时笔记");
-  }
-
   await page.locator("#account-menu-button").click();
-  if (!(await page.locator("#ai-settings-link").isVisible())) throw new Error("账户菜单中没有 AI 设置入口");
+  if (!(await page.locator("#ai-settings-link").isVisible())) throw new Error("账户菜单中没有设置入口");
   await page.locator("#ai-settings-link").click();
   if (new URL(page.url()).pathname !== "/settings" || !(await page.locator("#ai-settings-page").isVisible())) {
-    throw new Error("AI 设置独立页面路由失败");
+    throw new Error("设置页面路由失败");
   }
+  await page.goBack();
+  await page.waitForFunction(() => location.pathname === "/");
+  if (!(await page.locator(".dashboard-grid").isVisible())) throw new Error("浏览器后退未恢复工作台页面");
+  await page.goBack();
+  await page.waitForFunction(() => location.pathname === "/summary");
+  if (!(await page.locator("#summary-page").isVisible())) throw new Error("浏览器后退未恢复周期汇总页面");
+  await page.goForward();
+  await page.goForward();
+  await page.waitForFunction(() => location.pathname === "/settings");
+
   if (!(await page.locator(".topbar").isVisible()) || !(await page.locator("#account-menu-button").isVisible())) {
-    throw new Error("AI 设置页无法访问账户菜单");
+    throw new Error("设置页无法访问账户菜单");
   }
-  if ((await page.locator(".nav-list > .nav-item").count()) !== 5) {
-    throw new Error("桌面端主导航应只包含五个工作栏目");
-  }
-  if ((await page.locator(".nav-item[aria-current=\"page\"]").count()) !== 0
+  if ((await page.locator(".nav-list .nav-item[aria-current=\"page\"]").count()) !== 0
+    || (await page.locator(".sidebar-settings").getAttribute("aria-current")) !== "page"
     || (await page.locator("#ai-settings-link").getAttribute("aria-current")) !== "page") {
-    throw new Error("AI 设置页激活状态不正确");
+    throw new Error("设置页激活状态不正确");
   }
   const settingsStructure = await page.evaluate(() => {
     const link = document.querySelector("#ai-settings-link");
@@ -718,9 +791,46 @@ function readStoredZipEntries(buffer) {
     };
   });
   if (settingsStructure.href !== "/settings" || !settingsStructure.parentIsAccountMenu) {
-    throw new Error("AI 设置入口不是用户菜单中的独立真实链接");
+    throw new Error("设置入口不是用户菜单中的独立真实链接");
   }
-  if (settingsStructure.modifiedClickPrevented !== false) throw new Error("AI 设置入口错误拦截了修饰键点击");
+  if (settingsStructure.modifiedClickPrevented !== false) throw new Error("设置入口错误拦截了修饰键点击");
+
+  // Export and import live in the data tab of the settings page.
+  await page.locator("#settings-tab-data").click();
+  if (new URL(page.url()).hash !== "#data"
+    || !(await page.locator("#settings-panel-data").isVisible())
+    || await page.locator("#settings-panel-general").isVisible()) {
+    throw new Error("设置数据标签页没有打开");
+  }
+  const backupDownloadPromise = page.waitForEvent("download");
+  await page.locator("#settings-export-button").click();
+  const backupDownload = await backupDownloadPromise;
+  const backup = JSON.parse(fs.readFileSync(await backupDownload.path(), "utf8"));
+  if (!backupDownload.suggestedFilename().startsWith("mydays-backup-")
+    || backup.data.reviews["2026-08-12"]?.content !== "这是我手工修改的复盘"
+    || backup.data.periodReviews["week:2026-08-10"]?.[""]?.notes !== "继续检查数据边界。"
+    || "notes" in backup.data) {
+    throw new Error("导出备份没有包含新的每日复盘与周期汇报结构");
+  }
+  backup.data.reviews["2026-08-12"] = { content: "从备份导入的复盘" };
+  const importPath = `${screenshotDir}/import-backup.json`;
+  fs.writeFileSync(importPath, JSON.stringify(backup));
+  page.once("dialog", (dialog) => dialog.accept());
+  const preImportDownloadPromise = page.waitForEvent("download");
+  await page.locator("#import-file").setInputFiles(importPath);
+  const preImportDownload = await preImportDownloadPromise;
+  if (!preImportDownload.suggestedFilename().startsWith("mydays-before-import-")) {
+    throw new Error("导入前没有自动下载当前数据");
+  }
+  await page.waitForFunction(() => state.reviews["2026-08-12"]?.content === "从备份导入的复盘");
+  const importedState = await fetchState(page);
+  if (importedState.data.reviews["2026-08-12"]?.content !== "从备份导入的复盘"
+    || !importedState.data.tasks.some((task) => task.title === "完成 MyDays 第一版验收（已复核）")) {
+    throw new Error("导入备份没有写入 SQLite");
+  }
+  if (!(await page.locator("#settings-import-button").isVisible())) throw new Error("数据标签页缺少导入按钮");
+
+  await page.locator("#settings-tab-ai").click();
   await page.locator("#ai-provider-name").fill("浏览器测试服务");
   await page.locator("#ai-provider-base-url").fill("http://127.0.0.1:3000/v1");
   await page.locator("#ai-provider-model").fill("browser-test-model");
@@ -736,42 +846,72 @@ function readStoredZipEntries(buffer) {
   await page.waitForFunction(() => document.querySelector("#ai-prompt-mode")?.textContent === "已自定义");
   await page.reload();
   await page.waitForLoadState("networkidle");
-  if (!(await page.locator(".ai-provider-item", { hasText: "浏览器测试服务" }).isVisible())) {
+  if (new URL(page.url()).hash !== "#ai" || !(await page.locator(".ai-provider-item", { hasText: "浏览器测试服务" }).isVisible())) {
     throw new Error("AI 服务配置刷新后未保留");
   }
   if ((await page.locator("#ai-summary-prompt").inputValue()) !== "优先突出业务价值和下周风险。") throw new Error("自定义 AI 总结撮要刷新后未恢复");
-  page.on("dialog", (dialog) => dialog.accept());
+  page.once("dialog", (dialog) => dialog.accept());
   await page.locator("#ai-prompt-reset").click();
   await page.waitForFunction(() => document.querySelector("#ai-prompt-mode")?.textContent === "默认");
+  // Weekly goals, focus items, plan-your-day and the upcoming view.
+  await page.locator(".sidebar-settings").waitFor();
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
+  await page.locator("#today-button").evaluate((button) => { if (!button.hidden) button.click(); });
+  await page.locator("#goal-new-title").fill("上线侧边栏改版");
+  await page.getByRole("button", { name: "添加目标" }).click();
+  await page.locator(".goal-row", { hasText: "上线侧边栏改版" }).waitFor();
+  await page.locator("#capture-more-button").click();
+  await page.locator("#capture-goal").selectOption({ label: "上线侧边栏改版" });
+  await page.getByPlaceholder("写下需要完成的事，按 Enter 保存…").fill("调整侧边栏间距");
+  await page.getByRole("button", { name: "添加", exact: true }).click();
+  const goalTask = page.locator(".task-item", { hasText: "调整侧边栏间距" });
+  await goalTask.locator(".goal-chip", { hasText: "上线侧边栏改版" }).waitFor();
+  await goalTask.locator(".focus-toggle").click();
+  await page.waitForFunction(() => document.querySelector("#score-label")?.textContent === "重点完成");
+  await goalTask.locator(".task-check").click();
+  await page.locator(".goal-row", { hasText: "关联待办 1/1" }).waitFor();
+  const futureDue = await page.evaluate(() => {
+    const due = new Date();
+    due.setDate(due.getDate() + 2);
+    return `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+  });
+  await page.evaluate((date) => {
+    state.tasks.push({ id: "smoke-upcoming", date, title: "两天后交付的方案", project: "", priority: "normal", completed: false, createdAt: new Date().toISOString(), completedAt: null, originDate: null, dueDate: date, dueTime: null, remindMinutes: null, recurrenceId: null, focus: false, goalId: null });
+    persist();
+    render();
+  }, futureDue);
+  await page.locator(".plan-item", { hasText: "两天后交付的方案" }).waitFor();
+  await page.getByRole("link", { name: "即将到期" }).click();
+  await page.waitForFunction(() => location.pathname === "/upcoming");
+  const upcomingItem = page.locator(".upcoming-item", { hasText: "两天后交付的方案" });
+  await upcomingItem.locator("[data-upcoming-today]").click();
+  await page.waitForFunction(() => state.tasks.find((task) => task.id === "smoke-upcoming")?.date === new Date().toLocaleDateString("en-CA"));
+  const goalState = await fetchState(page);
+  if (goalState.data.goals.length !== 1 || !goalState.data.tasks.some((task) => task.goalId === goalState.data.goals[0].id && task.focus)) {
+    throw new Error("周目标或今日重点没有保存到 SQLite");
+  }
+
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(200);
   await page.screenshot({ path: `${screenshotDir}/desktop.png`, fullPage: true });
 
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await mobile.addInitScript(({ now }) => {
-    const NativeDate = Date;
-    class FixedDate extends NativeDate {
-      constructor(...args) {
-        super(...(args.length ? args : [now]));
-      }
-      static now() { return now; }
-    }
-    Object.setPrototypeOf(FixedDate, NativeDate);
-    globalThis.Date = FixedDate;
-  }, { now: fixedNow });
+  await addFixedClock(mobile, fixedNow);
+  mobile.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(`[mobile] ${message.text()}`);
+  });
   await mobile.goto(baseUrl);
   await mobile.waitForLoadState("networkidle");
-  if (!(await mobile.locator("#workbench-overview").isVisible()) || (await mobile.locator(".dashboard-grid").isVisible())) {
-    throw new Error("移动端工作台概览不可见");
-  }
-  const mobileOverviewBox = await mobile.locator("#workbench-overview").boundingBox();
-  if (!mobileOverviewBox || mobileOverviewBox.x < 0 || mobileOverviewBox.x + mobileOverviewBox.width > 390) {
-    throw new Error("移动端工作台超出 390px 视口");
-  }
-  await mobile.screenshot({ path: `${screenshotDir}/workbench-mobile.png`, fullPage: true });
-  await mobile.getByRole("link", { name: "待办事项" }).click();
+  if (!(await mobile.locator(".dashboard-grid").isVisible())) throw new Error("移动端工作台页面不可见");
+  await expectWithinViewport(mobile, ".dashboard-grid", 390, "移动端工作台页面超出 390px 视口");
+  await expectWithinViewport(mobile, "#review", 390, "移动端今日复盘超出 390px 视口");
+  await mobile.screenshot({ path: `${screenshotDir}/today-mobile.png`, fullPage: true });
   if (!(await mobile.locator(".sidebar").isVisible()) || !(await mobile.locator("#capture-input").isVisible())) {
     throw new Error("移动端核心界面不可见");
+  }
+  if ((await mobile.locator(".nav-list > .nav-item:visible").count()) !== 3
+    || await mobile.locator(".sidebar-section:visible, .sidebar-search:visible, .sidebar-settings:visible").count()) {
+    throw new Error("移动端底栏应只包含今天、即将到期和周期汇总");
   }
   const mobileMainBox = await mobile.locator(".main-content").boundingBox();
   if (!mobileMainBox || mobileMainBox.x !== 0 || mobileMainBox.width < 389) {
@@ -782,16 +922,10 @@ function readStoredZipEntries(buffer) {
     throw new Error("移动端待办编辑或删除入口不可见");
   }
   await mobileEditedTask.getByRole("button", { name: "编辑待办：完成 MyDays 第一版验收（已复核）" }).click();
-  const mobileEditFormBox = await mobile.locator(".entry-edit-form").boundingBox();
-  if (!mobileEditFormBox || mobileEditFormBox.x < 0 || mobileEditFormBox.x + mobileEditFormBox.width > 390) {
-    throw new Error("移动端原位置编辑表单超出 390px 视口");
-  }
+  await expectWithinViewport(mobile, ".entry-edit-form", 390, "移动端原位置编辑表单超出 390px 视口");
   await mobile.locator("[data-entry-edit-select][data-field='project'] .capture-select-trigger").click();
-  const mobileEditMenuBox = await mobile.locator("[data-entry-edit-select][data-field='project'] .capture-select-menu").boundingBox();
-  if (!mobileEditMenuBox || mobileEditMenuBox.x < 0 || mobileEditMenuBox.x + mobileEditMenuBox.width > 390) {
-    throw new Error("移动端编辑项目下拉超出 390px 视口");
-  }
-  await mobile.screenshot({ path: "/tmp/mydays-smoke/inline-edit-mobile.png", fullPage: true });
+  await expectWithinViewport(mobile, "[data-entry-edit-select][data-field='project'] .capture-select-menu", 390, "移动端编辑项目下拉超出 390px 视口");
+  await mobile.screenshot({ path: `${screenshotDir}/inline-edit-mobile.png`, fullPage: true });
   await mobile.keyboard.press("Escape");
   await mobile.getByRole("button", { name: "取消", exact: true }).click();
   await mobile.route("**/api/ai/polish-entry", async (route) => {
@@ -810,18 +944,11 @@ function readStoredZipEntries(buffer) {
   await mobile.locator("#capture-input").fill("8月20日前尽快的完成 MyDays v2.1 登录页修复");
   await mobile.getByRole("button", { name: "AI 润色" }).click();
   await mobile.locator("#capture-polish-suggestion").waitFor();
-  const mobilePolishBox = await mobile.locator("#capture-polish-suggestion").boundingBox();
-  if (!mobilePolishBox || mobilePolishBox.x < 0 || mobilePolishBox.x + mobilePolishBox.width > 390) {
-    throw new Error("移动端 AI 润色建议区超出 390px 视口");
-  }
-  await mobile.getByRole("button", { name: "取消" }).click();
-  await mobile.locator("#project-select-trigger").click();
-  await mobile.getByRole("button", { name: "管理项目" }).click();
-  const mobileDialogBox = await mobile.locator(".project-dialog-card").boundingBox();
-  if (!mobileDialogBox || mobileDialogBox.x < 0 || mobileDialogBox.x + mobileDialogBox.width > 390) {
-    throw new Error("移动端项目管理弹窗超出 390px 视口");
-  }
-  await mobile.locator("#project-dialog-done").click();
+  await expectWithinViewport(mobile, "#capture-polish-suggestion", 390, "移动端 AI 润色建议区超出 390px 视口");
+  await mobile.locator("#capture-polish-cancel").click();
+  await mobile.locator("#task-settings-open").click();
+  await expectWithinViewport(mobile, "#task-settings-dialog", 390, "移动端待办设置弹窗超出 390px 视口");
+  await mobile.locator("#task-settings-close").click();
   await mobile.locator("#date-picker-button").click();
   const mobileCalendarBox = await mobile.locator("#calendar-popover").boundingBox();
   if (!mobileCalendarBox || mobileCalendarBox.x < 0 || mobileCalendarBox.x + mobileCalendarBox.width > 390) {
@@ -834,63 +961,45 @@ function readStoredZipEntries(buffer) {
   await mobile.waitForTimeout(220);
   await mobile.screenshot({ path: `${screenshotDir}/calendar-mobile.png`, fullPage: true });
   await mobile.keyboard.press("Escape");
-  await mobile.getByRole("link", { name: "工作时间线" }).click();
-  if (new URL(mobile.url()).pathname !== "/timeline" || !(await mobile.locator(".timeline-panel").isVisible())) {
-    throw new Error("移动端独立页面导航失败");
-  }
+  await mobile.locator("#project-select-trigger").click();
+  await mobile.getByRole("button", { name: "管理项目" }).click();
+  await mobile.waitForFunction(() => location.pathname === "/settings");
+  await expectWithinViewport(mobile, "#settings-panel-general", 390, "移动端项目设置超出 390px 视口");
   await mobile.getByRole("link", { name: "周期汇总" }).click();
-  const summaryPageBox = await mobile.locator("#summary-page").boundingBox();
-  if (!summaryPageBox || summaryPageBox.x < 0 || summaryPageBox.x + summaryPageBox.width > 390) {
-    throw new Error("移动端周期汇总超出 390px 视口");
-  }
+  await expectWithinViewport(mobile, "#summary-page", 390, "移动端周期汇总超出 390px 视口");
   if (!(await mobile.locator("#generate-ai-summary").isVisible())) throw new Error("移动端 AI 总结入口不可见");
-  const mobileExportActionsBox = await mobile.locator(".summary-achievement-actions").boundingBox();
-  if (!mobileExportActionsBox
-    || mobileExportActionsBox.x < 0
-    || mobileExportActionsBox.x + mobileExportActionsBox.width > 390
-    || !(await mobile.locator("#summary-export-trigger").isVisible())) {
-    throw new Error("移动端主要成果导出操作超出 390px 视口或不可见");
-  }
+  if (!(await mobile.locator("#summary-export-trigger").isVisible())) throw new Error("移动端主要成果导出操作不可见");
+  await expectWithinViewport(mobile, ".summary-achievement-actions", 390, "移动端主要成果导出操作超出 390px 视口");
   await mobile.locator("#summary-export-trigger").click();
-  const mobileExportMenuBox = await mobile.locator("#summary-export-menu").boundingBox();
-  if (!mobileExportMenuBox || mobileExportMenuBox.x < 0 || mobileExportMenuBox.x + mobileExportMenuBox.width > 390) {
-    throw new Error("移动端主要成果导出菜单超出 390px 视口");
-  }
+  await expectWithinViewport(mobile, "#summary-export-menu", 390, "移动端主要成果导出菜单超出 390px 视口");
   await mobile.keyboard.press("Escape");
-  const mobileScopeBox = await mobile.locator(".summary-scope-bar").boundingBox();
-  if (!mobileScopeBox || mobileScopeBox.x < 0 || mobileScopeBox.x + mobileScopeBox.width > 390) {
-    throw new Error("移动端项目汇总范围控件超出 390px 视口");
-  }
+  await expectWithinViewport(mobile, ".summary-scope-bar", 390, "移动端项目汇总范围控件超出 390px 视口");
   await mobile.locator("#summary-project-trigger").click();
-  const mobileProjectMenuBox = await mobile.locator("#summary-project-menu").boundingBox();
-  if (!mobileProjectMenuBox || mobileProjectMenuBox.x < 0 || mobileProjectMenuBox.x + mobileProjectMenuBox.width > 390) {
-    throw new Error("移动端项目下拉菜单超出 390px 视口");
-  }
+  await expectWithinViewport(mobile, "#summary-project-menu", 390, "移动端项目下拉菜单超出 390px 视口");
   await mobile.locator("#summary-project-menu [data-value='自定义研发项目']").click();
   if ((await mobile.locator("#summary-project-filter").inputValue()) !== "自定义研发项目") {
     throw new Error("移动端自定义项目下拉无法切换项目");
   }
-  const summaryActionsBox = await mobile.locator(".summary-review-actions").boundingBox();
-  if (!summaryActionsBox || summaryActionsBox.x < 0 || summaryActionsBox.x + summaryActionsBox.width > 390) {
-    throw new Error("移动端 AI 总结操作区超出 390px 视口");
-  }
+  await expectWithinViewport(mobile, ".summary-review-actions", 390, "移动端 AI 总结操作区超出 390px 视口");
+  await mobile.getByRole("button", { name: "自定义", exact: true }).click();
+  await expectWithinViewport(mobile, "#summary-range-controls", 390, "移动端自定义时间段控件超出 390px 视口");
+  const summaryOverflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  if (summaryOverflow > 1) throw new Error(`移动端周期汇总存在 ${summaryOverflow}px 横向溢出`);
+  await mobile.screenshot({ path: `${screenshotDir}/summary-mobile.png`, fullPage: true });
   await mobile.locator("#account-menu-button").click();
   await mobile.locator("#ai-settings-link").click();
-  const aiSettingsBox = await mobile.locator("#ai-settings-page").boundingBox();
-  if (!aiSettingsBox || aiSettingsBox.x < 0 || aiSettingsBox.x + aiSettingsBox.width > 390) {
-    throw new Error("移动端 AI 设置超出 390px 视口");
-  }
-  if ((await mobile.locator(".nav-item").count()) !== 5) throw new Error("移动端主导航应只包含五个工作栏目");
-  const mobileNavBox = await mobile.locator(".sidebar").boundingBox();
-  if (!mobileNavBox) throw new Error("移动端底部导航不可见");
+  await expectWithinViewport(mobile, "#ai-settings-page", 390, "移动端设置超出 390px 视口");
+  if (!(await mobile.locator(".sidebar").boundingBox())) throw new Error("移动端底部导航不可见");
   if ((await mobile.locator("#ai-settings-link").getAttribute("aria-current")) !== "page") {
     throw new Error("移动端设置入口没有表达当前页面状态");
   }
+  await mobile.locator("#settings-tab-data").click();
+  await expectWithinViewport(mobile, "#settings-panel-data", 390, "移动端数据设置超出 390px 视口");
+  await mobile.locator("#settings-tab-ai").click();
   const mobileOverflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   if (mobileOverflow > 1) throw new Error(`移动端页面存在 ${mobileOverflow}px 横向溢出`);
   await mobile.locator(".ai-editor-actions").scrollIntoViewIfNeeded();
-  const visibleActionsBox = await mobile.locator(".ai-editor-actions").boundingBox();
-  if (!visibleActionsBox) throw new Error("移动端 AI 页面底部操作不可见");
+  if (!(await mobile.locator(".ai-editor-actions").boundingBox())) throw new Error("移动端 AI 页面底部操作不可见");
   await mobile.screenshot({ path: `${screenshotDir}/mobile.png`, fullPage: true });
 
   if (consoleErrors.length) throw new Error(`控制台错误：${consoleErrors.join(" | ")}`);

@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=35" />
+    <link rel="stylesheet" href="/styles.css?v=40" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -34,98 +34,94 @@
           </span>
         </div>
 
+        <button class="sidebar-search" id="sidebar-search" type="button" aria-haspopup="dialog" aria-controls="search-dialog" aria-keyshortcuts="Meta+K Control+K">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+          <span>搜索</span>
+          <kbd data-search-shortcut>⌘K</kbd>
+        </button>
+
         <nav class="nav-list">
           <a class="nav-item active" href="/" data-route="today" aria-current="page">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20H4v-9.5Z"/><path d="M9 20v-6h6v6"/></svg>
-            工作台
+            <span>工作台</span>
+            <span class="nav-count" id="nav-today-count" aria-hidden="true"></span>
           </a>
-          <a class="nav-item" href="/tasks" data-route="tasks">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8 12 2.5 2.5L16 9"/></svg>
-            待办事项
-          </a>
-          <a class="nav-item" href="/timeline" data-route="timeline">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
-            工作时间线
-          </a>
-          <a class="nav-item" href="/review" data-route="review">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v15H5z"/><path d="M8 3v4M16 3v4M8 11h8M8 15h5"/></svg>
-            今日复盘
+          <a class="nav-item" href="/upcoming" data-route="upcoming">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>
+            <span>即将到期</span>
+            <span class="nav-count" id="nav-upcoming-count" aria-hidden="true"></span>
           </a>
           <a class="nav-item" href="/summary" data-route="summary">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg>
-            周期汇总
+            <span>周期汇总</span>
           </a>
         </nav>
 
+        <section class="sidebar-section" aria-labelledby="sidebar-projects-title">
+          <div class="sidebar-section-head">
+            <h2 id="sidebar-projects-title">项目</h2>
+            <a class="sidebar-section-action" href="/settings#general" data-app-link aria-label="管理项目" title="管理项目">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </a>
+          </div>
+          <div class="sidebar-project-list" id="sidebar-project-list"></div>
+        </section>
+
+        <section class="sidebar-section sidebar-heatmap" aria-labelledby="heatmap-title">
+          <div class="sidebar-section-head">
+            <h2 id="heatmap-title">本月记录</h2>
+            <div class="heatmap-nav">
+              <button class="heatmap-nav-button" id="heatmap-previous" type="button" aria-label="上个月"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
+              <button class="heatmap-nav-button" id="heatmap-next" type="button" aria-label="下个月"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+          </div>
+          <div class="heatmap-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          <div class="heatmap-grid" id="heatmap-grid"></div>
+          <p class="heatmap-legend" id="heatmap-legend"></p>
+        </section>
+
         <div class="sidebar-spacer"></div>
+
+        <a class="nav-item sidebar-settings" href="/settings" data-route="ai-settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v1.2a6 6 0 0 1 2.8 1.6L19 8l2 3.5-1.2.7a6 6 0 0 1 0 3.6l1.2.7L19 20l-1.2-.8a6 6 0 0 1-2.8 1.6V22H9v-1.2a6 6 0 0 1-2.8-1.6L5 20l-2-3.5 1.2-.7a6 6 0 0 1 0-3.6L3 11.5 5 8l1.2.8A6 6 0 0 1 9 7.2V6a3 3 0 0 1 3-3Z"/><circle cx="12" cy="14" r="2.5"/></svg>
+          <span>设置</span>
+        </a>
 
         <div class="sidebar-tip">
           <span class="tip-icon">⌘</span>
           <p><strong>快速记录</strong><br />按 <kbd>/</kbd> 随时聚焦输入框</p>
         </div>
 
-        <div class="backup-actions">
-          <button class="backup-button" id="export-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
-            导出备份
-          </button>
-          <button class="backup-button" id="import-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 20h14"/></svg>
-            导入备份
-          </button>
-        </div>
         <input id="import-file" type="file" accept=".json,application/json" hidden />
         <dialog class="achievements-dialog task-settings-dialog" id="task-settings-dialog" aria-labelledby="task-settings-title">
           <div class="achievements-head">
             <div>
-              <p class="section-kicker">RECURRING</p>
-              <h2 id="task-settings-title">重复待办</h2>
-              <p>重复待办会在当天自动出现在列表里；错过的不会补到之后的日子。</p>
+              <p class="section-kicker">TASK SETTINGS</p>
+              <h2 id="task-settings-title">待办设置</h2>
+              <p>重复规则、自动顺延和到点提醒都在这里管理。</p>
             </div>
             <button class="icon-button" id="task-settings-close" type="button" aria-label="关闭">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
             </button>
           </div>
+          <div class="task-settings-rows">
+            <div class="settings-row">
+              <div><strong>未完成待办自动顺延</strong><p>之前日期没完成的待办会移到今天，并标出已顺延几天。重复待办不顺延。</p></div>
+              <label class="switch"><input type="checkbox" id="task-rollover" role="switch" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="task-rollover-label">已开启</span></label>
+            </div>
+            <div class="settings-row">
+              <div><strong>浏览器提醒</strong><p id="task-notify-state">设置了提醒的待办到时会弹出系统通知。</p></div>
+              <button class="soft-button" id="task-notify-enable" type="button">允许通知</button>
+            </div>
+          </div>
           <h3 class="agent-digest-subtitle">重复待办 <span class="count-badge" id="recurrence-count">0</span></h3>
+          <p class="task-settings-hint">在上方记录框点「截止 / 重复」创建。重复待办会在当天自动出现在列表里，错过的不会补到之后的日子。</p>
           <div class="recurrence-list" id="recurrence-list"></div>
-          <a class="text-button task-settings-more" href="/settings#general" id="task-settings-more">自动顺延与浏览器提醒设置 →</a>
-        </dialog>
-        <dialog class="achievements-dialog" id="achievements-dialog" aria-labelledby="achievements-title">
-          <div class="achievements-head">
-            <div>
-              <p class="section-kicker">ACHIEVEMENTS</p>
-              <h2 id="achievements-title">成就总结</h2>
-              <p>把一段时间的成果、周报和时间投入整理成按主题分组的总结，适合述职、绩效评估或简历素材。</p>
-            </div>
-            <button class="icon-button" id="achievements-close" type="button" aria-label="关闭">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-            </button>
-          </div>
-          <div class="achievements-range">
-            <div class="filter-tabs" role="group" aria-label="时间范围">
-              <button class="filter-tab active" type="button" data-range="first-half">上半年</button>
-              <button class="filter-tab" type="button" data-range="second-half">下半年</button>
-              <button class="filter-tab" type="button" data-range="year-to-date">今年至今</button>
-              <button class="filter-tab" type="button" data-range="last-year">去年</button>
-            </div>
-            <label class="ai-field"><span>开始</span><input id="achievements-from" type="date" required /></label>
-            <label class="ai-field"><span>结束</span><input id="achievements-to" type="date" required /></label>
-          </div>
-          <p class="achievements-scope" id="achievements-scope"></p>
-          <textarea id="achievements-output" maxlength="16000" placeholder="点击下方“生成”后，总结会出现在这里，可以直接编辑。" aria-label="成就总结内容"></textarea>
-          <div class="achievements-actions">
-            <span id="achievements-state" role="status" aria-live="polite">会把这段时间的工作记录发送给你配置的 AI 服务，结果不会自动保存。</span>
-            <div>
-              <button class="soft-button" id="achievements-copy" type="button" disabled>复制</button>
-              <button class="soft-button" id="achievements-download" type="button" disabled>下载 Markdown</button>
-              <button class="primary-button" id="achievements-generate" type="button">生成</button>
-            </div>
-          </div>
         </dialog>
         <dialog class="search-dialog" id="search-dialog" aria-label="搜索记录">
           <div class="search-box">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
-            <input id="search-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索待办、工作记录、笔记、复盘和周期汇报" aria-label="搜索关键词" aria-controls="search-results" />
+            <input id="search-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索待办、工作记录、复盘和周期汇报" aria-label="搜索关键词" aria-controls="search-results" />
             <kbd>Esc</kbd>
           </div>
           <div class="search-results" id="search-results" role="listbox" aria-label="搜索结果"></div>
@@ -195,7 +191,7 @@
             <button class="search-trigger" id="search-trigger" type="button" aria-haspopup="dialog" aria-controls="search-dialog" aria-keyshortcuts="Meta+K Control+K">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
               <span>搜索</span>
-              <kbd id="search-shortcut">⌘K</kbd>
+              <kbd data-search-shortcut>⌘K</kbd>
             </button>
             <span class="save-state"><i></i> 正在连接 SQLite…</span>
             <div class="account-menu-wrap">
@@ -235,7 +231,7 @@
                 <circle class="score-track" cx="38" cy="38" r="31" />
                 <circle class="score-value" id="score-ring" cx="38" cy="38" r="31" />
               </svg>
-              <span><strong id="score-number">0%</strong><small>完成度</small></span>
+              <span><strong id="score-number">0%</strong><small id="score-label">完成度</small></span>
             </div>
           </section>
 
@@ -251,14 +247,16 @@
             <form id="capture-form">
               <label class="capture-input-wrap" for="capture-input">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                <input
+                <textarea
+                  class="capture-input"
                   id="capture-input"
                   name="title"
-                  type="text"
+                  rows="2"
                   maxlength="120"
                   autocomplete="off"
+                  enterkeyhint="done"
                   placeholder="写下需要完成的事，按 Enter 保存…"
-                />
+                ></textarea>
               </label>
               <div class="capture-polish-suggestion" id="capture-polish-suggestion" aria-labelledby="capture-polish-title" hidden>
                 <div class="capture-polish-copy">
@@ -302,6 +300,10 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/></svg>
                   <span id="capture-more-label">截止 / 重复</span>
                 </button>
+                <div class="due-quick" id="capture-due-quick" role="group" aria-label="快捷截止">
+                  <button class="due-quick-button" type="button" data-due-quick="day" aria-pressed="false">今日截止</button>
+                  <button class="due-quick-button" type="button" data-due-quick="week" aria-pressed="false">本周截止</button>
+                </div>
                 <button class="soft-button capture-polish-button" id="capture-polish-button" type="button" disabled>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.1 3.1L16 7.2l-2.9 1.1L12 11.5l-1.1-3.2L8 7.2l2.9-1.1L12 3Zm6 8 1.2 3.3 3.3 1.2-3.3 1.2L18 20l-1.2-3.3-3.3-1.2 3.3-1.2L18 11ZM6 13l.9 2.1L9 16l-2.1.9L6 19l-.9-2.1L3 16l2.1-.9L6 13Z"/></svg>
                   <span>AI 润色</span>
@@ -320,72 +322,26 @@
                   <option value="1440">提前 1 天</option>
                 </select></label>
                 <label class="capture-extra-field"><span>重复</span><select id="capture-repeat"></select></label>
+                <label class="capture-extra-field"><span>关联目标</span><select id="capture-goal"><option value="">不关联</option></select></label>
               </div>
             </form>
           </section>
 
-          <section class="overview-grid" id="workbench-overview" aria-label="工作台概览">
-            <article class="panel overview-card overview-task-card">
-              <div class="overview-card-header">
-                <div>
-                  <p class="section-kicker">NEXT UP</p>
-                  <h2>待办摘要 <span class="count-badge" id="overview-task-count">0</span></h2>
-                </div>
-                <a class="overview-link" href="/tasks" data-app-link>查看全部 <span aria-hidden="true">→</span></a>
+          <section class="panel plan-card" id="plan-card" aria-labelledby="plan-title" hidden>
+            <div class="plan-head">
+              <div>
+                <p class="section-kicker">PLAN YOUR DAY</p>
+                <h2 id="plan-title">规划今天</h2>
+                <p>这些事还没排进今天，或者快到截止日期了。挑几件放进今天，再给最重要的 3 件点上星标。</p>
               </div>
-              <div class="overview-list" id="overview-task-list"></div>
-            </article>
-
-            <section class="panel note-panel overview-note-card">
-              <div class="panel-header compact">
-                <div>
-                  <p class="section-kicker">SCRATCHPAD</p>
-                  <h2>临时笔记</h2>
-                </div>
-                <span class="autosave-label">自动保存</span>
+              <div class="plan-actions">
+                <button class="soft-button" id="plan-add-all" type="button">全部加入今天</button>
+                <button class="icon-button" id="plan-dismiss" type="button" aria-label="今天不再提示" title="今天不再提示">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
               </div>
-              <textarea
-                id="daily-note"
-                maxlength="2000"
-                placeholder="会议结论、灵感、临时信息…"
-                aria-label="临时笔记"
-              ></textarea>
-              <div class="note-footer">
-                <span id="note-count">0 / 2000</span>
-                <span>⌘ + Enter 保存</span>
-              </div>
-            </section>
-
-            <article class="panel overview-card overview-timeline-card">
-              <div class="overview-card-header">
-                <div>
-                  <p class="section-kicker">RECENT ACTIVITY</p>
-                  <h2>最近动态 <span class="count-badge" id="overview-log-count">0</span></h2>
-                </div>
-                <a class="overview-link" href="/timeline" data-app-link>查看时间线 <span aria-hidden="true">→</span></a>
-              </div>
-              <div class="overview-list" id="overview-log-list"></div>
-            </article>
-
-            <article class="panel overview-card overview-review-card">
-              <div class="overview-card-header">
-                <div>
-                  <p class="section-kicker">DAILY REVIEW</p>
-                  <h2>今日复盘</h2>
-                </div>
-                <span class="overview-status" id="overview-review-status" data-status="pending">待复盘</span>
-              </div>
-              <div class="overview-review-body">
-                <span class="overview-review-icon" id="overview-review-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M5 5h14v15H5z"/><path d="M8 3v4M16 3v4M8 11h8M8 15h5"/></svg>
-                </span>
-                <div>
-                  <strong id="overview-review-title">用三分钟收好今天</strong>
-                  <p id="overview-review-copy">整理成果、问题和明天的重点。</p>
-                </div>
-              </div>
-              <a class="overview-action" href="/review" data-app-link id="overview-review-link">开始复盘 <span aria-hidden="true">→</span></a>
-            </article>
+            </div>
+            <div class="plan-list" id="plan-list"></div>
           </section>
 
           <div class="dashboard-grid">
@@ -401,7 +357,7 @@
                     <button class="filter-tab" type="button" data-filter="open">进行中</button>
                     <button class="filter-tab" type="button" data-filter="done">已完成</button>
                   </div>
-                  <button class="icon-button task-settings-button" id="task-settings-open" type="button" aria-label="管理重复待办" title="重复待办" aria-haspopup="dialog" aria-controls="task-settings-dialog">
+                  <button class="icon-button task-settings-button" id="task-settings-open" type="button" aria-label="待办设置" title="待办设置：重复、顺延与提醒" aria-haspopup="dialog" aria-controls="task-settings-dialog">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/></svg>
                   </button>
                 </div>
@@ -410,6 +366,20 @@
             </section>
 
             <div class="right-column">
+              <section class="panel goals-panel" id="goals" aria-labelledby="goals-title">
+                <div class="panel-header compact">
+                  <div>
+                    <p class="section-kicker">WEEKLY GOALS</p>
+                    <h2 id="goals-title">本周目标 <span class="count-badge" id="goal-count">0</span></h2>
+                  </div>
+                  <span class="goals-week" id="goals-week"></span>
+                </div>
+                <div class="goal-list" id="goal-list"></div>
+                <form class="goal-add-form" id="goal-add-form">
+                  <input id="goal-new-title" maxlength="120" autocomplete="off" placeholder="写下这周想达成的事" aria-label="新的本周目标" />
+                  <button class="soft-button" type="submit">添加目标</button>
+                </form>
+              </section>
               <section class="panel timeline-panel" id="timeline">
                 <div class="panel-header compact">
                   <div>
@@ -425,27 +395,28 @@
               <div class="review-heading">
                 <div>
                   <p class="section-kicker">DAILY REVIEW</p>
-                  <h2 id="daily-review-title">给今天一个交代</h2>
-                  <p>今天做了什么已经在时间线里，这里只记下问题和明天的重点。</p>
+                  <h2 id="daily-review-title">今日复盘</h2>
+                  <p>做了什么已经在时间线里。这里记下问题、想法和值得留意的事；明天要做的直接加成待办。</p>
                 </div>
               </div>
               <p class="review-day-summary" id="review-day-summary"></p>
-              <div class="review-fields review-fields-two">
-                <label>
-                  <span><i class="review-dot amber"></i> 遇到了什么问题？</span>
-                  <textarea id="review-blockers" maxlength="1200" placeholder="有什么阻塞或值得复盘的地方？"></textarea>
-                </label>
-                <label>
-                  <span><i class="review-dot blue"></i> 明天最重要的事</span>
-                  <textarea id="review-next" maxlength="1200" placeholder="明天优先推进什么？未完成的待办会自动列在这里。"></textarea>
-                </label>
-              </div>
+              <textarea class="review-content" id="review-content" maxlength="8000" placeholder="今天遇到了什么问题？有什么想法、结论或值得复盘的地方？" aria-labelledby="daily-review-title"></textarea>
               <div class="review-footer">
                 <span id="review-state">内容会自动保存</span>
-                <button class="primary-button" id="save-review" type="button">完成今日复盘</button>
               </div>
             </section>
           </div>
+
+          <section class="upcoming-page" id="upcoming-page" aria-labelledby="upcoming-title">
+            <div class="summary-hero">
+              <div>
+                <p class="eyebrow">UPCOMING</p>
+                <h1 id="upcoming-title">接下来要到期的事</h1>
+                <p>已逾期、今天到期和之后两周的待办，按日期排好。点「移到今天」把它排进今天。</p>
+              </div>
+            </div>
+            <div class="upcoming-list" id="upcoming-list"></div>
+          </section>
 
           <section class="summary-page" id="summary-page" aria-labelledby="summary-title">
             <div class="summary-hero">
@@ -456,15 +427,13 @@
               </div>
               <div class="summary-hero-actions">
                 <div class="period-tabs" role="group" aria-label="汇总周期">
+                  <button class="period-tab" type="button" aria-pressed="false" data-period="day">每日</button>
                   <button class="period-tab active" type="button" aria-pressed="true" data-period="week">每周</button>
                   <button class="period-tab" type="button" aria-pressed="false" data-period="month">每月</button>
                   <button class="period-tab" type="button" aria-pressed="false" data-period="quarter">每季度</button>
                   <button class="period-tab" type="button" aria-pressed="false" data-period="year">每年</button>
+                  <button class="period-tab" type="button" aria-pressed="false" data-period="range">自定义</button>
                 </div>
-                <button class="soft-button" id="achievements-open" type="button" aria-haspopup="dialog" aria-controls="achievements-dialog">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg>
-                  成就总结
-                </button>
               </div>
             </div>
 
@@ -480,6 +449,16 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
               </button>
               <button class="soft-button summary-current-button" id="summary-current" type="button">回到本周期</button>
+              <div class="summary-range-controls" id="summary-range-controls" hidden>
+                <div class="filter-tabs" role="group" aria-label="常用时间段">
+                  <button class="filter-tab" type="button" data-range="first-half">上半年</button>
+                  <button class="filter-tab" type="button" data-range="second-half">下半年</button>
+                  <button class="filter-tab" type="button" data-range="year-to-date">今年至今</button>
+                  <button class="filter-tab" type="button" data-range="last-year">去年</button>
+                </div>
+                <label class="summary-range-field"><span>开始</span><input id="summary-range-from" type="date" required /></label>
+                <label class="summary-range-field"><span>结束</span><input id="summary-range-to" type="date" required /></label>
+              </div>
             </div>
 
             <section class="summary-scope-bar" aria-labelledby="summary-scope-title">
@@ -535,6 +514,14 @@
               <p class="summary-time-note" id="summary-time-note">根据 AI 会话的时间估算：间隔不超过 20 分钟的对话算作连续工作，并行的会话在合计中只计一次。不包含没有使用 AI 的工作。</p>
             </section>
 
+            <section class="panel summary-goals-card" id="summary-goals-card" aria-labelledby="summary-goals-title" hidden>
+              <div class="panel-header compact">
+                <div><p class="section-kicker">GOALS</p><h2 id="summary-goals-title">每周目标</h2></div>
+                <span class="summary-goals-total" id="summary-goals-total"></span>
+              </div>
+              <div class="summary-goal-list" id="summary-goal-list"></div>
+            </section>
+
             <div class="summary-lists">
               <section class="panel summary-list-card">
                 <div class="panel-header compact summary-achievement-header">
@@ -582,9 +569,9 @@
             <section class="panel summary-review-panel">
               <div class="review-heading">
                 <div>
-                  <p class="section-kicker">PERIOD REVIEW</p>
-                  <h2 id="summary-review-title">本周复盘</h2>
-                  <p>成果和未完成事项见上方列表。「AI 周报」根据周期记录生成，可直接编辑；「补充说明」用来记下问题与反思。</p>
+                  <p class="section-kicker">PERIOD REPORT</p>
+                  <h2 id="summary-review-title">本周汇报</h2>
+                  <p id="summary-review-copy">成果和未完成事项见上方列表。AI 汇报根据这段时间的记录生成，可直接编辑；补充说明用来记下问题与反思。</p>
                 </div>
                 <div class="summary-review-actions">
                   <button class="primary-button summary-ai-button" id="generate-ai-summary" type="button">
@@ -595,15 +582,14 @@
               </div>
               <div class="summary-ai-notice" id="summary-ai-notice">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.4c0 4.4 3.2 8.1 7.5 9.6 4.3-1.5 7.5-5.2 7.5-9.6V6L12 3Z"/><path d="M9 12.2 11 14l4-4"/></svg>
-                <span>生成 AI 周报时，当前周期的工作事项会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。结果只写入下方「AI 周报」框。</span>
+                <span>生成时，这段时间的工作事项会发送给你配置的第三方 AI 服务；可从右上角 MY 菜单调整设置。结果只写入下方 AI 汇报框。</span>
               </div>
               <div class="review-fields summary-review-fields">
-                <label class="summary-ai-report-field"><span><i class="review-dot green"></i> AI 周报<button class="text-button" id="copy-summary-report" type="button">复制</button></span><textarea id="summary-ai-report" maxlength="20000" placeholder="点击上方「生成 AI 周报」根据周期记录生成，或直接在这里编写；内容自动保存，可编辑。"></textarea></label>
-                <label class="summary-notes-field"><span><i class="review-dot amber"></i> 补充说明<em class="review-auto">可选</em></span><textarea id="summary-blockers" maxlength="4000" placeholder="这个周期遇到了什么问题，有哪些值得反思？"></textarea></label>
+                <label class="summary-ai-report-field"><span><i class="review-dot green"></i> <b id="summary-report-label">AI 周报</b><button class="text-button" id="copy-summary-report" type="button">复制</button><button class="text-button" id="download-summary-report" type="button">下载 Markdown</button></span><textarea id="summary-ai-report" maxlength="20000" placeholder="点击上方按钮根据这段时间的记录生成，或直接在这里编写；内容自动保存，可编辑。"></textarea></label>
+                <label class="summary-notes-field"><span><i class="review-dot amber"></i> 补充说明<em class="review-auto">可选</em></span><textarea id="summary-blockers" maxlength="16000" placeholder="这段时间遇到了什么问题，有哪些值得反思？"></textarea></label>
               </div>
               <div class="review-footer">
                 <span id="summary-review-state">内容会自动保存</span>
-                <button class="primary-button" id="save-summary-review" type="button">完成本周复盘</button>
               </div>
             </section>
           </section>
@@ -613,7 +599,7 @@
               <div>
                 <p class="eyebrow">SETTINGS</p>
                 <h1 id="ai-settings-title">设置</h1>
-                <p>外观、项目、待办习惯、AI 服务和 Agent 工作汇总都在这里。</p>
+                <p>外观、项目、数据备份、AI 服务和 Agent 工作汇总都在这里。</p>
               </div>
             </div>
 
@@ -622,6 +608,10 @@
                 <button class="settings-tab" type="button" role="tab" id="settings-tab-general" aria-controls="settings-panel-general" data-settings-tab="general">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
                   <span>通用</span>
+                </button>
+                <button class="settings-tab" type="button" role="tab" id="settings-tab-data" aria-controls="settings-panel-data" data-settings-tab="data">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+                  <span>数据</span>
                 </button>
                 <button class="settings-tab" type="button" role="tab" id="settings-tab-ai" aria-controls="settings-panel-ai" data-settings-tab="ai">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3ZM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
@@ -651,18 +641,6 @@
                     </div>
                   </section>
 
-                  <section class="panel settings-card" aria-labelledby="settings-tasks-title">
-                    <div class="settings-card-head"><div><h2 id="settings-tasks-title">待办</h2><p>重复待办在待办列表右上角的循环图标里管理。</p></div></div>
-                    <div class="settings-row">
-                      <div><strong>未完成待办自动顺延</strong><p>之前日期没完成的待办会移到今天，并标出已顺延几天。重复待办不顺延。</p></div>
-                      <label class="switch"><input type="checkbox" id="task-rollover" role="switch" /><span class="switch-track" aria-hidden="true"></span><span class="switch-label" id="task-rollover-label">已开启</span></label>
-                    </div>
-                    <div class="settings-row">
-                      <div><strong>浏览器提醒</strong><p id="task-notify-state">设置了提醒的待办到时会弹出系统通知。</p></div>
-                      <button class="soft-button" id="task-notify-enable" type="button">允许通知</button>
-                    </div>
-                  </section>
-
                   <section class="panel settings-card" aria-labelledby="settings-projects-title">
                     <div class="settings-card-head"><div><h2 id="settings-projects-title">项目</h2><p>显示在记录区的项目下拉框中；改名或删除不会改写历史记录。</p></div></div>
                     <form class="project-add-form" id="project-add-form">
@@ -673,12 +651,23 @@
                     <span class="settings-state" id="project-state" role="status" aria-live="polite"></span>
                   </section>
 
-                  <section class="panel settings-card" aria-labelledby="settings-data-title">
-                    <div class="settings-card-head"><div><h2 id="settings-data-title">数据备份</h2><p>JSON 备份包含待办、记录、笔记、复盘和周期汇报，不含 AI 服务、项目选项和 Agent 汇总的设置。完整备份请备份 Docker 数据卷。</p></div></div>
+                </div>
+
+                <div class="settings-panel" id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" data-settings-panel="data" hidden>
+                  <section class="panel settings-card" aria-labelledby="settings-export-title">
+                    <div class="settings-card-head"><div><h2 id="settings-export-title">导出备份</h2><p>下载一份可阅读的 JSON 文件，包含待办、重复规则、工作记录、每日复盘和周期汇报。</p></div></div>
                     <div class="settings-actions-row">
-                      <button class="soft-button" id="settings-export-button" type="button">导出备份</button>
-                      <button class="soft-button" id="settings-import-button" type="button">导入备份…</button>
+                      <button class="primary-button" id="settings-export-button" type="button">导出备份</button>
                     </div>
+                  </section>
+                  <section class="panel settings-card" aria-labelledby="settings-import-title">
+                    <div class="settings-card-head"><div><h2 id="settings-import-title">导入备份</h2><p>用备份文件整体替换当前数据。导入前会自动下载一份当前数据；旧版本导出的备份也能导入。</p></div></div>
+                    <div class="settings-actions-row">
+                      <button class="soft-button" id="settings-import-button" type="button">选择备份文件…</button>
+                    </div>
+                  </section>
+                  <section class="panel settings-card" aria-labelledby="settings-volume-title">
+                    <div class="settings-card-head"><div><h2 id="settings-volume-title">完整备份</h2><p>JSON 备份不含 AI 服务、项目选项和 Agent 汇总的设置与素材。需要完整恢复时，请按 README 备份 Docker 数据卷 <code>mydays_data</code>。</p></div></div>
                   </section>
                 </div>
 
@@ -791,6 +780,16 @@
                     </ol>
                   </section>
 
+                  <section class="panel settings-card" aria-labelledby="connect-capture-title">
+                    <div class="settings-card-head"><div><h2 id="connect-capture-title">快速记录</h2><p>不打开页面也能记一笔：用 iOS 快捷指令、Raycast、Alfred 或脚本把待办和工作记录直接写进 MyDays。</p></div></div>
+                    <ol class="settings-steps">
+                      <li><strong>创建快速记录令牌</strong><span>在下方选择“快速记录”创建。它只能添加待办和工作记录，不能读取或修改其他数据。</span></li>
+                      <li><strong>发送请求</strong><code class="settings-code" id="capture-example">curl -X POST http://localhost:4173/api/agent/capture -H "Authorization: Bearer 你的令牌" -H "Content-Type: application/json" -d '{"type":"task","title":"给客户回电话","project":"工作"}'</code></li>
+                      <li><strong>可选字段</strong><span><code>type</code> 为 <code>task</code>（默认）或 <code>log</code>；还可以带 <code>project</code>、<code>priority</code>（low / normal / high）、<code>date</code> 和 <code>dueDate</code>（YYYY-MM-DD）。不带 <code>date</code> 时记到今天。</span></li>
+                      <li><strong>iOS 快捷指令</strong><span>添加“获取 URL 内容”动作，方法选 POST，填入上面的地址、两个请求头和 JSON 请求体，标题用“要求输入”的结果。</span></li>
+                    </ol>
+                  </section>
+
                   <section class="panel settings-card" aria-labelledby="connect-tokens-title">
                     <div class="settings-card-head"><div><h2 id="connect-tokens-title">令牌</h2><p>采集令牌只能推送素材，读取令牌只能查询；两者互不越权。吊销后立即失效。</p></div></div>
                     <form class="agent-token-form" id="agent-token-form">
@@ -798,6 +797,7 @@
                 <select id="agent-token-scope" aria-label="令牌用途">
                   <option value="ingest">采集：推送会话素材</option>
                   <option value="read">读取：供 agent 查询</option>
+                  <option value="capture">快速记录：从快捷指令、脚本添加</option>
                 </select>
                 <button class="soft-button" type="submit">创建令牌</button>
               </form>
@@ -843,6 +843,6 @@
       </div>
     </template>
 
-    <script src="/app.js?v=35"></script>
+    <script src="/app.js?v=40"></script>
   </body>
 </html>
