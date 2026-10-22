@@ -629,6 +629,17 @@ async function addFixedClock(page, now) {
     || (await page.locator("#summary-blockers").inputValue()) !== "") {
     throw new Error("项目周期 AI 总结或补充说明泄漏到全部项目范围");
   }
+  const sidebarProject = page.locator("#sidebar-project-list .sidebar-project").first();
+  const sidebarProjectName = await sidebarProject.getAttribute("data-project");
+  await sidebarProject.click();
+  if ((await page.locator("#summary-project-trigger .capture-select-value").innerText()) !== sidebarProjectName) {
+    throw new Error("从侧栏选择项目后，周期汇总的项目下拉没有同步");
+  }
+  await page.locator("#sidebar-project-list .sidebar-project").first().click();
+  if ((await page.locator("#summary-project-filter").inputValue()) !== ""
+    || (await page.locator("#summary-project-trigger .capture-select-value").innerText()) !== "全部项目") {
+    throw new Error("再次点击侧栏当前项目没有恢复全部项目");
+  }
   await page.getByRole("button", { name: "每月" }).click();
   if (!(await page.locator("#summary-period-label").innerText()).includes("8月")) throw new Error("月度周期切换失败");
   if ((await page.locator("#summary-report-label").innerText()) !== "AI 月报") throw new Error("月度汇报标签不正确");

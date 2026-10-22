@@ -2865,6 +2865,7 @@ function renderSummary() {
     : `${formatShortDate(context.start, context.start.getFullYear() !== context.end.getFullYear())} — ${formatShortDate(context.end, true)}`;
   elements.summaryCurrent.hidden = isCurrent;
   renderSummaryRangeControls(context);
+  renderProjectChoices();
   elements.summaryCompleted.textContent = String(completed);
   elements.summaryTaskTotal.textContent = `共 ${context.tasks.length} 项`;
   elements.summaryRate.textContent = `${context.tasks.length ? Math.round((completed / context.tasks.length) * 100) : 0}%`;
@@ -4245,7 +4246,9 @@ elements.sidebarProjectList.addEventListener("click", (event) => {
   const link = event.target.closest("[data-project]");
   if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  summaryProject = link.dataset.project;
+  // Clicking the project already in scope clears it back to all projects.
+  const active = currentRoute.key === "summary" && summaryProject === link.dataset.project;
+  summaryProject = active ? "" : link.dataset.project;
   summaryAchievementPage = 0;
   navigateTo("/summary");
 });
