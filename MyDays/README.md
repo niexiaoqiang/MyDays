@@ -141,7 +141,7 @@ AI 服务配置与业务数据分开保存，不会进入页面导出的 JSON �
 2. 在同一页面的「Agent 工作汇总」里打开开关，确认时区和整理时间。
 3. 在「设置 → 连接与令牌」创建一个用途为“采集”的令牌，然后选择一种采集器：
 
-   - **Mac：MyDaysBar（推荐）**。状态栏应用，源码在独立仓库 `mydays-mac`，用其中的 `./scripts/build-app.sh --install` 构建并安装到 `/Applications`。点击状态栏图标 → 设置…，填入 MyDays 地址和令牌后保存。它直接读取本机的 `~/.claude/projects`、`~/.codex/sessions` 和 Git 仓库。
+   - **Mac：MyDaysBar（推荐）**。状态栏应用，源码在本仓库的 `mydays-mac` 目录，用其中的 `./scripts/build-app.sh --install` 构建并安装到 `/Applications`。点击状态栏图标 → 设置…，填入 MyDays 地址和令牌后保存。它直接读取本机的 `~/.claude/projects`、`~/.codex/sessions` 和 Git 仓库。
    - **其他电脑或 Linux：Node 版采集器**（需要 Node.js 24）。在那台电脑上取得本项目代码后运行：
 
      ```bash
