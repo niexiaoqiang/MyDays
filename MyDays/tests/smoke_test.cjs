@@ -277,10 +277,11 @@ async function addFixedClock(page, now) {
   }
   await createdTask.getByRole("button", { name: "编辑待办：完成 MyDays 第一版" }).click();
   await page.locator(".entry-edit-title").fill("尚未保存的编辑草稿");
-  page.once("dialog", (dialog) => dialog.dismiss());
   await page.locator(".task-item", { hasText: "从浏览器迁移的待办" })
     .getByRole("button", { name: "编辑待办：从浏览器迁移的待办" })
     .click();
+  await page.locator("#confirm-dialog-cancel").click();
+  await page.locator("#confirm-dialog").waitFor({ state: "hidden" });
   if ((await page.locator(".entry-edit-title").inputValue()) !== "尚未保存的编辑草稿") {
     throw new Error("切换编辑目标时静默丢失了未保存内容");
   }
@@ -300,11 +301,11 @@ async function addFixedClock(page, now) {
   await page.getByPlaceholder("写下需要完成的事，按 Enter 保存…").fill("临时删除待办");
   await page.getByRole("button", { name: "添加", exact: true }).click();
   const disposableTask = page.locator(".task-item", { hasText: "临时删除待办" });
-  page.once("dialog", (dialog) => dialog.accept());
   await disposableTask.getByRole("button", { name: "删除待办：临时删除待办" }).click();
-  if (await page.locator(".task-title", { hasText: "临时删除待办" }).count()) {
-    throw new Error("待办删除功能失效");
-  }
+  await page.locator("#confirm-dialog-ok").click();
+  await page.locator("#confirm-dialog").waitFor({ state: "hidden" });
+  await page.locator(".task-title", { hasText: "临时删除待办" }).waitFor({ state: "detached", timeout: 5000 })
+    .catch(() => { throw new Error("待办删除功能失效"); });
 
   // Recurrence, rollover and notifications are managed in one task settings dialog.
   await page.locator("#task-settings-open").click();
@@ -353,11 +354,11 @@ async function addFixedClock(page, now) {
   await page.getByPlaceholder("记录刚刚完成的工作，按 Enter 保存…").fill("临时删除记录");
   await page.getByRole("button", { name: "添加", exact: true }).click();
   const disposableLog = page.locator(".timeline-item", { hasText: "临时删除记录" });
-  page.once("dialog", (dialog) => dialog.accept());
   await disposableLog.getByRole("button", { name: "删除工作记录：临时删除记录" }).click();
-  if (await page.locator(".timeline-content p", { hasText: "临时删除记录" }).count()) {
-    throw new Error("工作记录删除功能失效");
-  }
+  await page.locator("#confirm-dialog-ok").click();
+  await page.locator("#confirm-dialog").waitFor({ state: "hidden" });
+  await page.locator(".timeline-content p", { hasText: "临时删除记录" }).waitFor({ state: "detached", timeout: 5000 })
+    .catch(() => { throw new Error("工作记录删除功能失效"); });
   const reviewAfterLog = (await fetchState(page)).data.reviews["2026-08-12"]?.content ?? "";
   if (reviewAfterLog.includes("检查移动端布局与交互")) throw new Error("今日复盘不应自动复述时间线中的工作记录");
 
@@ -398,8 +399,9 @@ async function addFixedClock(page, now) {
   await page.locator("#project-select-menu [data-value='研发项目（新）']").click();
   await page.locator("#project-select-trigger").click();
   await page.getByRole("button", { name: "管理项目" }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.locator(".project-option-row[data-name='研发项目（新）']").getByRole("button", { name: "删除项目：研发项目（新）" }).click();
+  await page.locator("#confirm-dialog-ok").click();
+  await page.locator("#confirm-dialog").waitFor({ state: "hidden" });
   await page.locator(".project-option-row[data-name='研发项目（新）']").waitFor({ state: "detached" });
   await page.getByRole("link", { name: "工作台", exact: true }).click();
   if ((await page.locator("#project-select").inputValue()) !== "") throw new Error("删除当前项目后表单没有回退到无项目");
@@ -826,9 +828,10 @@ async function addFixedClock(page, now) {
   backup.data.reviews["2026-08-12"] = { content: "从备份导入的复盘" };
   const importPath = `${screenshotDir}/import-backup.json`;
   fs.writeFileSync(importPath, JSON.stringify(backup));
-  page.once("dialog", (dialog) => dialog.accept());
   const preImportDownloadPromise = page.waitForEvent("download");
   await page.locator("#import-file").setInputFiles(importPath);
+  await page.locator("#confirm-dialog-ok").click();
+  await page.locator("#confirm-dialog").waitFor({ state: "hidden" });
   const preImportDownload = await preImportDownloadPromise;
   if (!preImportDownload.suggestedFilename().startsWith("mydays-before-import-")) {
     throw new Error("导入前没有自动下载当前数据");
@@ -861,8 +864,9 @@ async function addFixedClock(page, now) {
     throw new Error("AI 服务配置刷新后未保留");
   }
   if ((await page.locator("#ai-summary-prompt").inputValue()) !== "优先突出业务价值和下周风险。") throw new Error("自定义 AI 总结撮要刷新后未恢复");
-  page.once("dialog", (dialog) => dialog.accept());
   await page.locator("#ai-prompt-reset").click();
+  await page.locator("#confirm-dialog-ok").click();
+  await page.locator("#confirm-dialog").waitFor({ state: "hidden" });
   await page.waitForFunction(() => document.querySelector("#ai-prompt-mode")?.textContent === "默认");
   // Weekly goals, focus items, plan-your-day and the upcoming view.
   await page.locator(".sidebar-settings").waitFor();

@@ -174,6 +174,10 @@ const elements = {
   agentTokenCreated: document.querySelector("#agent-token-created"),
   agentTokenValue: document.querySelector("#agent-token-value"),
   agentTokenCopy: document.querySelector("#agent-token-copy"),
+  confirmDialog: document.querySelector("#confirm-dialog"),
+  confirmDialogMessage: document.querySelector("#confirm-dialog-message"),
+  confirmDialogOk: document.querySelector("#confirm-dialog-ok"),
+  confirmDialogCancel: document.querySelector("#confirm-dialog-cancel"),
   agentTokenList: document.querySelector("#agent-token-list"),
   footerDate: document.querySelector("#footer-date"),
   toast: document.querySelector("#toast"),
@@ -461,7 +465,7 @@ async function toggleAgentDigest() {
   const enable = elements.agentDigestEnabled.checked;
   if (enable) {
     const provider = aiProviders.find((entry) => entry.id === elements.agentDigestProvider.value) ?? aiProviders.find((entry) => entry.isDefault);
-    const confirmed = window.confirm([
+    const confirmed = await confirmDialog([
       "开启 Agent 工作汇总？",
       "",
       "采集器会读取本机 Claude Code、Codex 会话中你的提问和 agent 的最终答复，暂存在 MyDays 中，",
@@ -521,7 +525,7 @@ async function runAgentDigest(date) {
 }
 
 async function clearAgentTurns() {
-  if (!window.confirm("清除全部已采集的素材？已经写入时间线的记录不受影响；采集器之后仍会重新同步最近 8 天的会话。")) return;
+  if (!await confirmDialog("清除全部已采集的素材？已经写入时间线的记录不受影响；采集器之后仍会重新同步最近 8 天的会话。", { confirmLabel: "清除", danger: true })) return;
   try {
     await requestJson("/api/agent-digest/turns", { method: "DELETE" });
     await loadAgentDigest({ fillForm: false });
@@ -547,7 +551,7 @@ async function createAgentToken(event) {
 }
 
 async function revokeAgentToken(id, name) {
-  if (!window.confirm(`吊销令牌「${name}」？使用它的采集器将立即无法连接。`)) return;
+  if (!await confirmDialog(`吊销令牌「${name}」？使用它的采集器将立即无法连接。`, { confirmLabel: "吊销", danger: true })) return;
   try {
     await requestJson(`/api/agent-tokens/${id}`, { method: "DELETE" });
     await loadAgentDigest({ fillForm: false });
@@ -582,6 +586,54 @@ function moveSummaryExportFocus(offset) {
   const currentIndex = elements.summaryExportItems.indexOf(document.activeElement);
   const nextIndex = (Math.max(0, currentIndex) + offset + elements.summaryExportItems.length) % elements.summaryExportItems.length;
   elements.summaryExportItems[nextIndex]?.focus();
+}
+
+// 页面内确认框：替代 window.confirm。部分浏览器环境（如内嵌浏览器）会屏蔽原生弹窗并直接返回 false。
+function confirmDialog(message, { confirmLabel = "确定", danger = false } = {}) {
+  const dialog = elements.confirmDialog;
+  if (dialog.open) return Promise.resolve(false);
+  elements.confirmDialogMessage.textContent = message;
+  elements.confirmDialogOk.textContent = confirmLabel;
+  elements.confirmDialogOk.classList.toggle("danger", danger);
+  dialog.returnValue = "";
+  const previousFocus = document.activeElement;
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+      resolve(dialog.returnValue === "ok");
+    }, { once: true });
+    dialog.showModal();
+    (danger ? elements.confirmDialogCancel : elements.confirmDialogOk).focus();
+  });
+}
+
+// 复制文本：Clipboard API 只在 HTTPS 或 localhost 下可用，通过局域网 / Tailscale 的 HTTP 地址访问时退回 execCommand。
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 继续尝试兜底方式
+    }
+  }
+  const previousFocus = document.activeElement;
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;";
+  (previousFocus?.closest?.("dialog") ?? document.body).append(area);
+  area.select();
+  area.setSelectionRange(0, text.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+  return copied;
 }
 
 async function requestJson(url, options = {}) {
@@ -1352,9 +1404,9 @@ function sameEntryEditTarget(kind, id, host, hostId) {
   return entryEdit?.kind === kind && entryEdit.id === id && entryEdit.host === host && entryEdit.hostId === hostId;
 }
 
-function startEntryEdit(kind, id, host, hostId) {
+async function startEntryEdit(kind, id, host, hostId) {
   if (sameEntryEditTarget(kind, id, host, hostId)) return;
-  if (entryEdit?.dirty && !window.confirm("当前修改尚未保存，确定放弃并编辑另一条记录吗？")) return;
+  if (entryEdit?.dirty && !await confirmDialog("当前修改尚未保存，确定放弃并编辑另一条记录吗？")) return;
   const entry = kind === "task"
     ? state.tasks.find((item) => item.id === id)
     : state.logs.find((item) => item.id === id && !item.sourceTaskId);
@@ -1909,9 +1961,9 @@ function toggleRecurrence(id) {
   }
 }
 
-function deleteRecurrence(id) {
+async function deleteRecurrence(id) {
   const recurrence = state.recurrences.find((entry) => entry.id === id);
-  if (!recurrence || !window.confirm(`删除重复待办“${recurrence.title}”？之后不再生成，已经生成的待办会保留。`)) return;
+  if (!recurrence || !await confirmDialog(`删除重复待办“${recurrence.title}”？之后不再生成，已经生成的待办会保留。`, { confirmLabel: "删除", danger: true })) return;
   state.recurrences = state.recurrences.filter((entry) => entry.id !== id);
   persist();
   renderTaskSettings();
@@ -2073,9 +2125,9 @@ function toggleGoal(id) {
   if (goal.done) showToast(`目标达成：${goal.title}`);
 }
 
-function deleteGoal(id) {
+async function deleteGoal(id) {
   const goal = state.goals.find((entry) => entry.id === id);
-  if (!goal || !window.confirm(`删除目标“${goal.title}”？关联的待办会保留，只是不再挂在这个目标下。`)) return;
+  if (!goal || !await confirmDialog(`删除目标“${goal.title}”？关联的待办会保留，只是不再挂在这个目标下。`, { confirmLabel: "删除", danger: true })) return;
   state.goals = state.goals.filter((entry) => entry.id !== id);
   state.tasks.filter((task) => task.goalId === id).forEach((task) => { task.goalId = null; });
   persist();
@@ -2952,7 +3004,7 @@ async function generateAiSummary() {
   const existingValue = elements.summaryAiReport.value;
   const context = getSummaryContext();
   const label = reportLabel(context);
-  if (existingValue.trim() && !window.confirm(`AI ${label}会覆盖当前「AI ${label}」编辑框的内容，是否继续？`)) return;
+  if (existingValue.trim() && !await confirmDialog(`AI ${label}会覆盖当前「AI ${label}」编辑框的内容，是否继续？`)) return;
   const requestedProject = summaryProject;
   const scope = requestedProject ? { project: requestedProject } : {};
   setAiSummaryLoading(true);
@@ -3069,7 +3121,7 @@ async function saveAiSummaryPrompt() {
 }
 
 async function resetAiSummaryPrompt() {
-  if (!window.confirm("确定恢复 MyDays 默认的 AI 总结撮要吗？")) return;
+  if (!await confirmDialog("确定恢复 MyDays 默认的 AI 总结撮要吗？")) return;
   elements.aiPromptReset.disabled = true;
   elements.aiPromptState.textContent = "正在恢复默认…";
   try {
@@ -3148,7 +3200,7 @@ async function moveProjectOption(name, offset) {
 }
 
 async function removeProjectOption(name) {
-  if (!window.confirm(`确定从下拉选项中删除“${name}”吗？历史记录不会改变。`)) return;
+  if (!await confirmDialog(`确定从下拉选项中删除“${name}”吗？历史记录不会改变。`, { confirmLabel: "删除", danger: true })) return;
   try {
     const result = await requestJson(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
     projectOptions = result.projects;
@@ -3358,7 +3410,7 @@ async function setSelectedAiProviderDefault() {
 
 async function deleteSelectedAiProvider() {
   const provider = selectedAiProvider();
-  if (!provider || !window.confirm(`确定删除 AI 服务“${provider.name}”吗？此操作无法撤销。`)) return;
+  if (!provider || !await confirmDialog(`确定删除 AI 服务“${provider.name}”吗？此操作无法撤销。`, { confirmLabel: "删除", danger: true })) return;
   try {
     await requestJson(`/api/ai/providers/${provider.id}`, { method: "DELETE" });
     selectedAiProviderId = null;
@@ -3372,7 +3424,7 @@ async function deleteSelectedAiProvider() {
 
 async function clearSelectedAiKey() {
   const provider = selectedAiProvider();
-  if (!provider || !window.confirm(`确定清除“${provider.name}”保存的 API Key 吗？`)) return;
+  if (!provider || !await confirmDialog(`确定清除“${provider.name}”保存的 API Key 吗？`, { confirmLabel: "清除", danger: true })) return;
   try {
     await requestJson(`/api/ai/providers/${provider.id}/key`, { method: "DELETE" });
     await loadAiProviders();
@@ -3671,9 +3723,9 @@ function toggleTask(id) {
   render();
 }
 
-function deleteTask(id) {
+async function deleteTask(id) {
   const task = state.tasks.find((entry) => entry.id === id);
-  if (!task || !window.confirm(`确定删除待办“${task.title}”吗？`)) return;
+  if (!task || !await confirmDialog(`确定删除待办“${task.title}”吗？`, { confirmLabel: "删除", danger: true })) return;
   state.tasks = state.tasks.filter((entry) => entry.id !== id);
   state.logs = state.logs.filter((log) => log.sourceTaskId !== id);
   if (entryEdit?.kind === "task" && entryEdit.id === id) entryEdit = null;
@@ -3682,9 +3734,9 @@ function deleteTask(id) {
   showToast("待办已删除");
 }
 
-function deleteLog(id) {
+async function deleteLog(id) {
   const log = state.logs.find((entry) => entry.id === id);
-  if (!log || !window.confirm(`确定删除工作记录“${log.title}”吗？`)) return;
+  if (!log || !await confirmDialog(`确定删除工作记录“${log.title}”吗？`, { confirmLabel: "删除", danger: true })) return;
   state.logs = state.logs.filter((entry) => entry.id !== id);
   if ((entryEdit?.kind === "log" && entryEdit.id === id) || (entryEdit?.host === "log" && entryEdit.hostId === id)) entryEdit = null;
   persist();
@@ -3901,7 +3953,7 @@ async function importBackupFile(file) {
     return;
   }
   const exportedAt = backup.exportedAt ? `（导出于 ${formatDateTime(backup.exportedAt)}）` : "";
-  const confirmed = window.confirm([
+  const confirmed = await confirmDialog([
     `导入「${file.name}」${exportedAt}？`,
     "",
     `其中包含：${describeBackup(backup.data)}。`,
@@ -4163,12 +4215,7 @@ elements.agentDigestDays.addEventListener("click", (event) => {
 elements.agentDigestClear.addEventListener("click", clearAgentTurns);
 elements.agentTokenForm.addEventListener("submit", createAgentToken);
 elements.agentTokenCopy.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(elements.agentTokenValue.textContent);
-    showToast("令牌已复制");
-  } catch {
-    showToast("复制失败，请手动选择复制");
-  }
+  showToast(await copyText(elements.agentTokenValue.textContent) ? "令牌已复制" : "复制失败，请手动选择复制");
 });
 elements.agentTokenList.addEventListener("click", (event) => {
   const button = event.target.closest("[data-token-revoke]");

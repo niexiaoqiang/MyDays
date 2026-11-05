@@ -16,7 +16,7 @@
       content="MyDays：一个安静、轻量的个人工作记录台。"
     />
     <title>MyDays · 工作台</title>
-    <link rel="stylesheet" href="/styles.css?v=40" />
+    <link rel="stylesheet" href="/styles.css?v=41" />
   </head>
   <body data-route="today">
     <div class="app-shell">
@@ -843,6 +843,16 @@
       </div>
     </template>
 
-    <script src="/app.js?v=40"></script>
+    <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-message">
+      <form method="dialog">
+        <p id="confirm-dialog-message"></p>
+        <div class="confirm-dialog-actions">
+          <button class="text-button" id="confirm-dialog-cancel" type="submit" value="cancel">取消</button>
+          <button class="primary-button" id="confirm-dialog-ok" type="submit" value="ok">确定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js?v=41"></script>
   </body>
 </html>
