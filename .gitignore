@@ -1,1 +1,45 @@
 .DS_Store
+
+# 数据、备份与密钥：任何目录下都不允许提交
+data/
+backups/
+secrets/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bak
+*.dump
+*.sql
+.ai-config-secret
+.collector-token
+*token*.txt
+*password*.txt
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# 本地工具与 AI 工作流状态
+.claude/
+.codex/
+.agents/
+.trellis/
+.codegraph/
+AGENTS.md
+CLAUDE.md
+
+# 依赖与构建产物
+node_modules/
+coverage/
+*.log
+.build/
+build/
+.swiftpm/
