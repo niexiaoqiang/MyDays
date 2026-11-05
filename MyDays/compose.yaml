@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     image: mydays:local
     ports:
-      - "127.0.0.1:${MYDAYS_PORT:-4173}:3000"
+      - "${MYDAYS_BIND:-127.0.0.1}:${MYDAYS_PORT:-4173}:3000"
     environment:
       MYDAYS_ACCESS_PASSWORD_FILE: /run/secrets/mydays_access_password
       AI_ALLOW_PROXY_FAKE_IP: "1"
