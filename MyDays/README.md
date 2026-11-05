@@ -47,7 +47,7 @@ docker compose down
 MYDAYS_PORT=8080 docker compose up -d --build
 ```
 
-默认仅绑定 `127.0.0.1`，不会直接暴露到局域网或公网。
+默认仅绑定 `127.0.0.1`，不会直接暴露到局域网或公网。如果要让局域网或 Tailscale 中的其他设备访问（例如把 MyDays 跑在家里的 Mac mini 上），在项目目录的 `.env` 文件中写入 `MYDAYS_BIND=0.0.0.0` 后重新 `docker compose up -d`。此时登录密码和令牌以 HTTP 明文在网络中传输，只建议在可信的家庭网络或 Tailscale 内使用，不要做公网端口映射。
 
 请不要使用 `docker compose down -v`，其中的 `-v` 会删除保存 SQLite 数据的卷。
 
